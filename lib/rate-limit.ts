@@ -182,3 +182,31 @@ export const exportLimiter = createRateLimiter({
   interval: 60_000,
   maxRequests: 5, // 5 exports / minute / IP
 })
+
+// ---------------------------------------------------------------------------
+// WhatsApp channel management limiters
+// ---------------------------------------------------------------------------
+
+/** /api/whatsapp/channels (CRUD) and connect/disconnect/status operations */
+export const whatsappChannelLimiter = createRateLimiter({
+  name: 'whatsapp-channel',
+  uniqueTokenPerInterval: 500,
+  interval: 60_000,
+  maxRequests: 10, // 10 management ops / minute / IP
+})
+
+/** /api/whatsapp/channels/:id/send — message sending */
+export const whatsappSendLimiter = createRateLimiter({
+  name: 'whatsapp-send',
+  uniqueTokenPerInterval: 500,
+  interval: 60_000,
+  maxRequests: 60, // 60 messages / minute / IP
+})
+
+/** /api/whatsapp/webhook/:provider/:channelId — inbound webhook from providers */
+export const whatsappWebhookLimiter = createRateLimiter({
+  name: 'whatsapp-webhook',
+  uniqueTokenPerInterval: 1000,
+  interval: 60_000,
+  maxRequests: 500, // high limit — external provider traffic
+})

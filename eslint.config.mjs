@@ -9,6 +9,12 @@ const eslintConfig = defineConfig([
   securityPlugin.configs.recommended,
   {
     rules: {
+      // Ignore intentionally-unused variables/params that start with _ (TypeScript convention)
+      '@typescript-eslint/no-unused-vars': ['warn', {
+        varsIgnorePattern: '^_',
+        argsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+      }],
       // Prevent dynamic property access with user-controlled keys (e.g., obj[userInput])
       'security/detect-object-injection': 'error',
       // Prevent RegExp constructed from non-literal strings (ReDoS risk)

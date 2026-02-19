@@ -17,6 +17,8 @@ export default defineConfig({
       OPENROUTER_API_KEY: 'sk-or-test-placeholder-for-unit-tests-only',
       OPENROUTER_MODEL: 'anthropic/claude-3.5-sonnet',
       NODE_ENV: 'test',
+      // 64 hex chars = 32 bytes — safe placeholder for tests only
+      CREDENTIALS_ENCRYPTION_KEY: 'a'.repeat(64),
     },
     coverage: {
       provider: 'v8',

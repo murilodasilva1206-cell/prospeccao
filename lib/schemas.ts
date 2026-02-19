@@ -99,3 +99,43 @@ export const AgentIntentSchema = z.object({
 })
 
 export type AgentIntent = z.infer<typeof AgentIntentSchema>
+
+// ---------------------------------------------------------------------------
+// /api/whatsapp — channel management
+// ---------------------------------------------------------------------------
+
+export const WHATSAPP_PROVIDERS = ['META_CLOUD', 'EVOLUTION', 'UAZAPI'] as const
+export type WhatsAppProvider = (typeof WHATSAPP_PROVIDERS)[number]
+
+// Credentials shape — at schema level all are optional; adapters validate per-provider
+const ChannelCredentialsSchema = z.object({
+  access_token: SafeString(512).optional(),    // Meta: page/system access token
+  phone_number_id: SafeString(50).optional(),  // Meta: phone number ID
+  waba_id: SafeString(50).optional(),          // Meta: WhatsApp Business Account ID
+  app_secret: SafeString(200).optional(),      // Meta: app secret for HMAC verification
+  instance_url: SafeString(512).optional(),    // Evolution/UAZAPI: base instance URL
+  api_key: SafeString(200).optional(),         // Evolution/UAZAPI: API key
+})
+
+export const ChannelCreateSchema = z.object({
+  workspace_id: SafeString(100),
+  name: SafeString(100),
+  provider: z.enum(WHATSAPP_PROVIDERS),
+  credentials: ChannelCredentialsSchema,
+  // phone_number is optional at creation; set after successful connection
+  phone_number: z.string().regex(/^\+?\d{8,15}$/).optional(),
+})
+export type ChannelCreate = z.infer<typeof ChannelCreateSchema>
+export type ChannelCredentialsInput = z.infer<typeof ChannelCredentialsSchema>
+
+export const SendMessageSchema = z.object({
+  to: z.string().regex(/^\d{8,15}$/, 'Numero deve conter apenas digitos (8-15)'),
+  message: z.string().min(1).max(4096),
+})
+export type SendMessage = z.infer<typeof SendMessageSchema>
+
+// Validates dynamic route params for /api/whatsapp/webhook/[provider]/[channelId]
+export const WebhookPathSchema = z.object({
+  provider: z.enum(WHATSAPP_PROVIDERS),
+  channelId: z.string().uuid('channelId deve ser um UUID valido'),
+})

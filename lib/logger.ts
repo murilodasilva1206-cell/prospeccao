@@ -15,6 +15,11 @@ export const logger = pino({
       'phone',    // PII
       'cpf',      // PII — Brazilian tax ID
       'token',
+      'access_token',          // WhatsApp channel credentials
+      'api_key',               // WhatsApp channel credentials
+      'app_secret',            // WhatsApp Meta app secret
+      'webhook_secret',        // HMAC signing secret
+      'credentials_encrypted', // AES-GCM blob — never log raw
     ],
     censor: '[Redacted]',
   },

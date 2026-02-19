@@ -16,6 +16,12 @@ const EnvSchema = z.object({
   NODE_ENV: z
     .enum(['development', 'production', 'test'])
     .default('development'),
+  // AES-256-GCM key for encrypting WhatsApp channel credentials at rest.
+  // Must be exactly 64 hex characters (= 32 bytes = 256 bits).
+  CREDENTIALS_ENCRYPTION_KEY: z
+    .string()
+    .length(64, 'CREDENTIALS_ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes)')
+    .regex(/^[0-9a-fA-F]{64}$/, 'CREDENTIALS_ENCRYPTION_KEY must be a valid hex string'),
 })
 
 // parse() throws ZodError at module load time if any required var is missing
