@@ -7,14 +7,27 @@ export function middleware(_request: NextRequest) {
   // Content-Security-Policy
   // Restricts which resources the browser will load.
   // 'unsafe-inline' for scripts/styles is needed for Next.js dev; tighten with nonces in future.
+  //
+  // S3_ENDPOINT is set for Cloudflare R2; S3_REGION for AWS S3.
+  // Presigned S3/R2 URLs are used for img-src, media-src and connect-src so the browser
+  // can fetch media files directly without proxying through the app server.
+  const s3Endpoint = process.env.S3_ENDPOINT
+  const s3Region = process.env.S3_REGION ?? 'us-east-1'
+  const s3Bucket = process.env.S3_BUCKET ?? ''
+  const s3Host = s3Endpoint
+    ? new URL(s3Endpoint).hostname
+    : `${s3Bucket}.s3.${s3Region}.amazonaws.com`
+  const s3Origin = `https://${s3Host}`
+
   response.headers.set(
     'Content-Security-Policy',
     [
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline'",
       "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data:",
-      "connect-src 'self' https://openrouter.ai",
+      `img-src 'self' data: ${s3Origin}`,
+      `media-src 'self' ${s3Origin}`,
+      `connect-src 'self' https://openrouter.ai ${s3Origin}`,
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",

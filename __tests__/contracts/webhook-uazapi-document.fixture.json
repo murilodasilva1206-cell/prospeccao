@@ -1,0 +1,13 @@
+{
+  "type": "message",
+  "messageId": "uaz-doc-msg-001",
+  "from": "5531977770001",
+  "fromMe": false,
+  "mediaType": "document",
+  "mimetype": "application/pdf",
+  "filename": "proposta_comercial.pdf",
+  "caption": "Segue a proposta",
+  "filesize": 245678,
+  "timestamp": 1700000400,
+  "contactName": "Carlos Souza"
+}

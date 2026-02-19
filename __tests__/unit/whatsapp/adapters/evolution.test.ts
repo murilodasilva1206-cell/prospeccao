@@ -219,7 +219,7 @@ describe('EvolutionAdapter.normalizeEvent', () => {
     const event = adapter.normalizeEvent(raw)
     expect(event.type).toBe('message.received')
     expect(event.event_id).toBe('evo-key-001')
-    expect(event.payload.text).toBe('Ola!')
+    expect(event.payload.body).toBe('Ola!')
   })
 
   it('normalizes an outbound message (fromMe=true)', () => {

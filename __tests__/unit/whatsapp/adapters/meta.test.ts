@@ -224,7 +224,7 @@ describe('MetaAdapter.normalizeEvent', () => {
     expect(event.type).toBe('message.received')
     expect(event.event_id).toBe('wamid.msg001')
     expect(event.payload.from).toBe('5511988880000')
-    expect(event.payload.text).toBe('Ola mundo')
+    expect(event.payload.body).toBe('Ola mundo')
   })
 
   it('normalizes a message status update (delivered)', () => {

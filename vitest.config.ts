@@ -19,6 +19,13 @@ export default defineConfig({
       NODE_ENV: 'test',
       // 64 hex chars = 32 bytes — safe placeholder for tests only
       CREDENTIALS_ENCRYPTION_KEY: 'a'.repeat(64),
+      // Enable media storage in tests so S3-related tests work with MSW mocks
+      MEDIA_STORAGE_ENABLED: 'true',
+      // S3 placeholders — real credentials only in .env.local / CI secrets
+      S3_BUCKET: 'test-bucket',
+      S3_ACCESS_KEY_ID: 'test-key-id',
+      S3_SECRET_ACCESS_KEY: 'test-secret-key',
+      S3_REGION: 'us-east-1',
     },
     coverage: {
       provider: 'v8',

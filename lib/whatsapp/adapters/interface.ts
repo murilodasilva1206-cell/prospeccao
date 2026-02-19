@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
-// IWhatsAppAdapter — contract every provider adapter must implement.
+// IWhatsAppAdapter - contract every provider adapter must implement.
 //
 // Each method receives the full Channel and decrypted ChannelCredentials so
-// adapters don't need to decrypt themselves.
+// adapters do not need to decrypt themselves.
 // ---------------------------------------------------------------------------
 
 import type { Channel, ChannelCredentials, ChannelStatus, WhatsAppEvent } from '../types'
@@ -23,30 +23,25 @@ export interface SendResult {
   message_id: string
 }
 
+export interface DownloadResult {
+  buffer: Buffer
+  mime: string
+  filename: string
+}
+
 export interface IWhatsAppAdapter {
-  /**
-   * Validates credentials and registers the channel on the provider side.
-   * Returns the provider-assigned external_instance_id.
-   */
   createChannel(
     channel: Channel,
     creds: ChannelCredentials,
   ): Promise<{ external_instance_id: string }>
 
-  /**
-   * Initiates the connection flow.
-   * - Meta: validates token → CONNECTED immediately.
-   * - Evolution/UAZAPI: creates instance → returns QR → PENDING_QR.
-   */
   startConnection(channel: Channel, creds: ChannelCredentials): Promise<ConnectResult>
 
-  /** Polls the provider for the current connection state. */
   getConnectionStatus(channel: Channel, creds: ChannelCredentials): Promise<ChannelStatus>
 
-  /** Logs out and frees the channel on the provider side. */
   disconnect(channel: Channel, creds: ChannelCredentials): Promise<void>
 
-  /** Sends a text message. */
+  /** Sends a plain text message. */
   sendMessage(
     channel: Channel,
     creds: ChannelCredentials,
@@ -54,11 +49,71 @@ export interface IWhatsAppAdapter {
     text: string,
   ): Promise<SendResult>
 
+  /** Sends a media message (image, video, document). */
+  sendMedia(
+    channel: Channel,
+    creds: ChannelCredentials,
+    to: string,
+    mediaBuffer: Buffer,
+    mime: string,
+    filename: string,
+    caption?: string,
+  ): Promise<SendResult>
+
+  /** Sends an audio/PTT message. */
+  sendAudio(
+    channel: Channel,
+    creds: ChannelCredentials,
+    to: string,
+    audioBuffer: Buffer,
+  ): Promise<SendResult>
+
+  /** Sends a sticker (WebP). */
+  sendSticker(
+    channel: Channel,
+    creds: ChannelCredentials,
+    to: string,
+    stickerBuffer: Buffer,
+  ): Promise<SendResult>
+
+  /** Sends a reaction emoji to an existing message. */
+  sendReaction(
+    channel: Channel,
+    creds: ChannelCredentials,
+    to: string,
+    emoji: string,
+    targetMessageId: string,
+  ): Promise<SendResult>
+
+  /**
+   * Downloads media referenced in an inbound event.
+   * Use the media_id from the normalized inbound event payload.
+   */
+  downloadMedia(
+    channel: Channel,
+    creds: ChannelCredentials,
+    mediaId: string,
+  ): Promise<DownloadResult>
+
+  /**
+   * Normalizes an inbound message event (all types: text, image, audio, etc.).
+   * Returns null if the payload does not represent an inbound message.
+   */
+  normalizeInboundEvent(
+    rawPayload: unknown,
+  ): Omit<WhatsAppEvent, 'channel_id' | 'provider'> | null
+
+  /**
+   * Normalizes a status update event (sent/delivered/read) for outbound messages.
+   * Returns null if the payload does not represent a status update.
+   */
+  normalizeStatusEvent(
+    rawPayload: unknown,
+  ): Omit<WhatsAppEvent, 'channel_id' | 'provider'> | null
+
   /**
    * Verifies the incoming webhook request signature.
-   * - Meta: HMAC-SHA256(rawBody, app_secret) vs X-Hub-Signature-256 header.
-   * - Evolution/UAZAPI: constant-time compare header apikey vs channel.webhook_secret.
-   * Returns false on any mismatch — caller must respond 401.
+   * Returns false on any mismatch - caller must respond 401.
    */
   verifyWebhookSignature(
     channel: Channel,
@@ -68,8 +123,8 @@ export interface IWhatsAppAdapter {
   ): boolean
 
   /**
-   * Converts a raw provider webhook payload to a normalized WhatsAppEvent.
-   * channel_id and provider are filled in by the webhook handler.
+   * @deprecated Use normalizeInboundEvent / normalizeStatusEvent instead.
+   * Kept for backward compatibility with processWebhook pipeline.
    */
   normalizeEvent(
     rawPayload: unknown,

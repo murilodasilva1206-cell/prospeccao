@@ -14,12 +14,12 @@
 
 import { createHash } from 'crypto'
 import { safeCompare } from '../crypto'
+import type { IWhatsAppAdapter, ConnectResult, SendResult, DownloadResult } from './interface'
+import type { Channel, ChannelCredentials, ChannelStatus, WhatsAppEvent } from '../types'
 
 function stableId(...parts: string[]): string {
   return createHash('sha256').update(parts.join('::')).digest('hex').slice(0, 32)
 }
-import type { IWhatsAppAdapter, ConnectResult, SendResult } from './interface'
-import type { Channel, ChannelCredentials, ChannelStatus, WhatsAppEvent } from '../types'
 
 export class UazapiAdapter implements IWhatsAppAdapter {
   private base(creds: ChannelCredentials): string {
@@ -151,6 +151,127 @@ export class UazapiAdapter implements IWhatsAppAdapter {
     return { message_id: messageId }
   }
 
+  async sendMedia(
+    channel: Channel,
+    creds: ChannelCredentials,
+    to: string,
+    mediaBuffer: Buffer,
+    mime: string,
+    filename: string,
+    caption?: string,
+  ): Promise<SendResult> {
+    const instanceId = channel.external_instance_id
+    if (!instanceId) throw new Error('Canal nao possui external_instance_id')
+
+    const base64 = mediaBuffer.toString('base64')
+    const res = await fetch(`${this.base(creds)}/message/sendFile`, {
+      method: 'POST',
+      headers: this.headers(creds),
+      body: JSON.stringify({
+        id: instanceId,
+        phone: to,
+        base64,
+        mimetype: mime,
+        filename,
+        caption: caption ?? '',
+      }),
+    })
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      throw new Error(`UAZAPI sendMedia falhou (${res.status}): ${body}`)
+    }
+
+    const data = (await res.json()) as { id?: string; messageId?: string }
+    const messageId = data.id ?? data.messageId
+    if (!messageId) throw new Error('UAZAPI nao retornou id no sendMedia')
+
+    return { message_id: messageId }
+  }
+
+  async sendAudio(
+    channel: Channel,
+    creds: ChannelCredentials,
+    to: string,
+    audioBuffer: Buffer,
+  ): Promise<SendResult> {
+    return this.sendMedia(channel, creds, to, audioBuffer, 'audio/ogg', 'audio.ogg')
+  }
+
+  async sendSticker(
+    channel: Channel,
+    creds: ChannelCredentials,
+    to: string,
+    stickerBuffer: Buffer,
+  ): Promise<SendResult> {
+    const instanceId = channel.external_instance_id
+    if (!instanceId) throw new Error('Canal nao possui external_instance_id')
+
+    const base64 = stickerBuffer.toString('base64')
+    const res = await fetch(`${this.base(creds)}/message/sendSticker`, {
+      method: 'POST',
+      headers: this.headers(creds),
+      body: JSON.stringify({ id: instanceId, phone: to, base64, mimetype: 'image/webp' }),
+    })
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      throw new Error(`UAZAPI sendSticker falhou (${res.status}): ${body}`)
+    }
+
+    const data = (await res.json()) as { id?: string; messageId?: string }
+    return { message_id: data.id ?? data.messageId ?? stableId('uazapi', 'sticker', to) }
+  }
+
+  async sendReaction(
+    channel: Channel,
+    creds: ChannelCredentials,
+    to: string,
+    emoji: string,
+    targetMessageId: string,
+  ): Promise<SendResult> {
+    const instanceId = channel.external_instance_id
+    if (!instanceId) throw new Error('Canal nao possui external_instance_id')
+
+    const res = await fetch(`${this.base(creds)}/message/sendReaction`, {
+      method: 'POST',
+      headers: this.headers(creds),
+      body: JSON.stringify({ id: instanceId, phone: to, messageId: targetMessageId, reaction: emoji }),
+    })
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      throw new Error(`UAZAPI sendReaction falhou (${res.status}): ${body}`)
+    }
+
+    const data = (await res.json()) as { id?: string; messageId?: string }
+    return { message_id: data.id ?? data.messageId ?? targetMessageId + '-reaction' }
+  }
+
+  async downloadMedia(
+    channel: Channel,
+    creds: ChannelCredentials,
+    mediaId: string,
+  ): Promise<DownloadResult> {
+    const instanceId = channel.external_instance_id
+    if (!instanceId) throw new Error('Canal nao possui external_instance_id')
+
+    const res = await fetch(
+      `${this.base(creds)}/message/downloadMedia?id=${encodeURIComponent(instanceId)}&messageId=${encodeURIComponent(mediaId)}`,
+      { headers: this.headers(creds) },
+    )
+
+    if (!res.ok) throw new Error(`UAZAPI downloadMedia falhou (${res.status})`)
+
+    const data = (await res.json()) as { base64?: string; mimetype?: string; filename?: string }
+    if (!data.base64) throw new Error('UAZAPI nao retornou base64 para o media')
+
+    const buffer = Buffer.from(data.base64, 'base64')
+    const mime = data.mimetype ?? 'application/octet-stream'
+    const ext = mime.split('/')[1]?.split(';')[0] ?? 'bin'
+    return { buffer, mime, filename: data.filename ?? `uazapi-${mediaId}.${ext}` }
+  }
+
   verifyWebhookSignature(
     channel: Channel,
     _creds: ChannelCredentials,
@@ -161,6 +282,94 @@ export class UazapiAdapter implements IWhatsAppAdapter {
     const auth = headers.get('authorization') ?? ''
     const token = auth.startsWith('Bearer ') ? auth.slice(7) : auth
     return safeCompare(token, channel.webhook_secret)
+  }
+
+  normalizeInboundEvent(
+    rawPayload: unknown,
+  ): Omit<WhatsAppEvent, 'channel_id' | 'provider'> | null {
+    const payload = rawPayload as {
+      type?: string
+      messageId?: string
+      from?: string
+      fromMe?: boolean
+      body?: string
+      mimetype?: string
+      filename?: string
+      caption?: string
+      mediaType?: string
+      contactName?: string
+      timestamp?: number
+      reactionTo?: string
+      emoji?: string
+    }
+
+    const type = payload.type ?? ''
+    if (type !== 'message' && type !== 'message.received') return null
+    if (payload.fromMe === true) return null
+
+    const messageId = payload.messageId ?? ''
+    const from = payload.from ?? ''
+    const timestamp = payload.timestamp ? new Date(payload.timestamp * 1000) : new Date()
+    const msgType = payload.mediaType ?? (payload.emoji ? 'reaction' : 'text')
+
+    const eventPayload: Record<string, unknown> = {
+      from,
+      message_id: messageId,
+      message_type: msgType,
+      contact_name: payload.contactName ?? null,
+    }
+
+    if (msgType === 'reaction') {
+      eventPayload.reaction_to = payload.reactionTo ?? null
+      eventPayload.emoji = payload.emoji ?? null
+      eventPayload.body = payload.emoji ?? null
+    } else if (msgType === 'text') {
+      eventPayload.body = payload.body ?? null
+    } else {
+      eventPayload.media_id = messageId
+      eventPayload.mime_type = payload.mimetype ?? null
+      eventPayload.caption = payload.caption ?? null
+      eventPayload.filename = payload.filename ?? null
+    }
+
+    return {
+      type: 'message.received',
+      event_id: messageId || stableId('uazapi', 'inbound', from, String(timestamp.getTime())),
+      timestamp,
+      payload: eventPayload,
+    }
+  }
+
+  normalizeStatusEvent(
+    rawPayload: unknown,
+  ): Omit<WhatsAppEvent, 'channel_id' | 'provider'> | null {
+    const payload = rawPayload as {
+      type?: string
+      messageId?: string
+      status?: string
+      ack?: number
+    }
+
+    const type = payload.type ?? ''
+    if (type !== 'message.ack' && type !== 'ack') return null
+
+    const messageId = payload.messageId ?? ''
+    // UAZAPI ack: 1=sent, 2=delivered, 3=read
+    const ack = payload.ack ?? 0
+    const typeMap: Record<number, WhatsAppEvent['type']> = {
+      1: 'message.sent',
+      2: 'message.delivered',
+      3: 'message.read',
+    }
+    const eventType = typeMap[ack] ?? 'message.sent'
+    const statusLabel = ack === 3 ? 'read' : ack === 2 ? 'delivered' : 'sent'
+
+    return {
+      type: eventType,
+      event_id: `${messageId}-ack${ack}`,
+      timestamp: new Date(),
+      payload: { message_id: messageId, status: statusLabel },
+    }
   }
 
   normalizeEvent(
@@ -178,16 +387,22 @@ export class UazapiAdapter implements IWhatsAppAdapter {
 
     const type = payload.type ?? ''
 
-    if (type === 'message' || type === 'message.received') {
+    const inbound = this.normalizeInboundEvent(rawPayload)
+    if (inbound) return inbound
+
+    const status = this.normalizeStatusEvent(rawPayload)
+    if (status) return status
+
+    // Outbound message.sent (fromMe)
+    if ((type === 'message' || type === 'message.received') && payload.fromMe === true) {
       return {
-        type: payload.fromMe ? 'message.sent' : 'message.received',
-        event_id: payload.messageId ?? stableId('uazapi', 'message', payload.from ?? '', JSON.stringify(rawPayload)),
+        type: 'message.sent',
+        event_id: payload.messageId ?? stableId('uazapi', 'sent', payload.from ?? '', JSON.stringify(rawPayload)),
         timestamp: new Date(),
         payload: {
           from: payload.from,
           message_id: payload.messageId,
-          from_me: payload.fromMe,
-          text: payload.body,
+          from_me: true,
         },
       }
     }

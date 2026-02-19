@@ -165,8 +165,12 @@ function readErrorMessage(err: unknown): string {
   return "Erro inesperado"
 }
 
-async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(input, init)
+async function requestJson<T>(input: string, init?: RequestInit, apiKey?: string): Promise<T> {
+  const headers: Record<string, string> = {
+    ...(init?.headers as Record<string, string> | undefined),
+    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+  }
+  const res = await fetch(input, { ...init, headers })
   const payload = (await res.json().catch(() => ({}))) as {
     error?: string
     detail?: string
@@ -178,7 +182,6 @@ async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
 }
 
 export default function WhatsAppChannelsPage() {
-  const [workspaceId, setWorkspaceId] = useState("default")
   const [channels, setChannels] = useState<Channel[]>([])
   const [loadingChannels, setLoadingChannels] = useState(false)
   const [creating, setCreating] = useState(false)
@@ -190,6 +193,11 @@ export default function WhatsAppChannelsPage() {
   const [provider, setProvider] = useState<Provider>("META_CLOUD")
   const [channelName, setChannelName] = useState("")
   const [phoneNumber, setPhoneNumber] = useState("")
+
+  // Workspace API key (wk_...) — auth for all /api/whatsapp/* routes.
+  // Kept in memory only — never persisted to localStorage to limit XSS exposure.
+  // Separate from `apiKey` below which is the Evolution/UAZAPI provider credential.
+  const [workspaceKey, setWorkspaceKey] = useState<string>("")
 
   const [accessToken, setAccessToken] = useState("")
   const [phoneNumberId, setPhoneNumberId] = useState("")
@@ -221,14 +229,16 @@ export default function WhatsAppChannelsPage() {
   }, [qrCodeBase64])
 
   async function loadChannels() {
-    if (!workspaceId.trim()) {
-      toast.warning("Informe o workspace_id para listar canais")
+    if (!workspaceKey.trim()) {
+      toast.warning("Configure sua chave de workspace (wk_...) antes de continuar")
       return
     }
     setLoadingChannels(true)
     try {
       const data = await requestJson<{ data: Channel[] }>(
-        `/api/whatsapp/channels?workspace_id=${encodeURIComponent(workspaceId)}`
+        `/api/whatsapp/channels`,
+        undefined,
+        workspaceKey,
       )
       setChannels(data.data)
     } catch (err) {
@@ -252,8 +262,8 @@ export default function WhatsAppChannelsPage() {
   }
 
   async function handleCreateChannel() {
-    if (!workspaceId.trim()) {
-      toast.warning("workspace_id e obrigatorio")
+    if (!workspaceKey.trim()) {
+      toast.warning("Configure sua chave de workspace (wk_...) antes de continuar")
       return
     }
     if (!channelName.trim()) {
@@ -276,7 +286,6 @@ export default function WhatsAppChannelsPage() {
     setCreating(true)
     try {
       const payload = {
-        workspace_id: workspaceId.trim(),
         name: channelName.trim(),
         provider,
         credentials,
@@ -287,7 +296,7 @@ export default function WhatsAppChannelsPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-      })
+      }, workspaceKey)
 
       setChannels((prev) => [created.data, ...prev])
       setChannelName("")
@@ -307,12 +316,17 @@ export default function WhatsAppChannelsPage() {
   }
 
   async function handleConnect(channel: Channel) {
+    if (!workspaceKey.trim()) {
+      toast.warning("Configure sua chave de workspace (wk_...) antes de continuar")
+      return
+    }
     setBusyChannelId(channel.id)
     setBusyAction("connect")
     try {
       const result = await requestJson<ConnectResponse>(
         `/api/whatsapp/channels/${channel.id}/connect`,
-        { method: "POST" }
+        { method: "POST" },
+        workspaceKey,
       )
 
       setChannels((prev) =>
@@ -344,11 +358,17 @@ export default function WhatsAppChannelsPage() {
   }
 
   async function handleRefreshStatus(channel: Channel) {
+    if (!workspaceKey.trim()) {
+      toast.warning("Configure sua chave de workspace (wk_...) antes de continuar")
+      return
+    }
     setBusyChannelId(channel.id)
     setBusyAction("status")
     try {
       const result = await requestJson<StatusResponse>(
-        `/api/whatsapp/channels/${channel.id}/status`
+        `/api/whatsapp/channels/${channel.id}/status`,
+        undefined,
+        workspaceKey,
       )
       setChannels((prev) =>
         prev.map((item) =>
@@ -372,12 +392,17 @@ export default function WhatsAppChannelsPage() {
   }
 
   async function handleDisconnect(channel: Channel) {
+    if (!workspaceKey.trim()) {
+      toast.warning("Configure sua chave de workspace (wk_...) antes de continuar")
+      return
+    }
     setBusyChannelId(channel.id)
     setBusyAction("disconnect")
     try {
       await requestJson<{ data: { status: ChannelStatus } }>(
         `/api/whatsapp/channels/${channel.id}/disconnect`,
-        { method: "POST" }
+        { method: "POST" },
+        workspaceKey,
       )
       setChannels((prev) =>
         prev.map((item) =>
@@ -404,6 +429,10 @@ export default function WhatsAppChannelsPage() {
 
   async function handleSendTestMessage() {
     if (!sendChannelId) return
+    if (!workspaceKey.trim()) {
+      toast.warning("Configure sua chave de workspace (wk_...) antes de continuar")
+      return
+    }
     setBusyChannelId(sendChannelId)
     setBusyAction("send")
     try {
@@ -416,7 +445,8 @@ export default function WhatsAppChannelsPage() {
             to: sendTo.replace(/[^\d]/g, ""),
             message: sendMessage,
           }),
-        }
+        },
+        workspaceKey,
       )
       setSendDialogOpen(false)
       toast.success("Mensagem enviada")
@@ -447,6 +477,17 @@ export default function WhatsAppChannelsPage() {
               <p className="mt-1 text-sm text-zinc-600">
                 Configure conexoes com Meta Cloud API, Evolution API e UAZAPI.
               </p>
+              <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                <a className="rounded-full border border-zinc-300 bg-white px-3 py-1 text-zinc-700 hover:bg-zinc-100" href="/whatsapp">
+                  Modulo
+                </a>
+                <a className="rounded-full border border-zinc-300 bg-white px-3 py-1 text-zinc-700 hover:bg-zinc-100" href="/whatsapp/inbox">
+                  Inbox
+                </a>
+                <a className="rounded-full border border-zinc-300 bg-white px-3 py-1 text-zinc-700 hover:bg-zinc-100" href="/whatsapp/chaves">
+                  Chaves API
+                </a>
+              </div>
             </div>
             <div className="flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800">
               <ShieldCheck className="size-3.5" />
@@ -470,14 +511,21 @@ export default function WhatsAppChannelsPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-medium text-zinc-700">
-                    Workspace ID
+                  <label className="text-xs font-semibold text-zinc-800 flex items-center gap-1.5">
+                    <ShieldCheck className="size-3.5 text-emerald-600" />
+                    Chave de API do Workspace
                   </label>
                   <Input
-                    value={workspaceId}
-                    onChange={(e) => setWorkspaceId(e.target.value)}
-                    placeholder="ex: default"
+                    type="password"
+                    value={workspaceKey}
+                    onChange={(e) => setWorkspaceKey(e.target.value)}
+                    placeholder="wk_..."
+                    className={workspaceKey.trim() ? "border-emerald-300 focus-visible:ring-emerald-400" : "border-red-300 focus-visible:ring-red-400"}
                   />
+                  <p className="text-xs text-zinc-500">
+                    Chave gerada com <code className="bg-zinc-100 px-1 rounded">bootstrap-api-key.mjs</code>.
+                    Mantida apenas em memória — nao persistida no navegador.
+                  </p>
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-medium text-zinc-700">

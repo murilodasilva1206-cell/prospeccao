@@ -210,3 +210,35 @@ export const whatsappWebhookLimiter = createRateLimiter({
   interval: 60_000,
   maxRequests: 500, // high limit — external provider traffic
 })
+
+/** /api/whatsapp/channels/:id/send-media — media file uploads and sends */
+export const whatsappMediaLimiter = createRateLimiter({
+  name: 'whatsapp-media',
+  uniqueTokenPerInterval: 500,
+  interval: 60_000,
+  maxRequests: 20, // 20 media sends / minute / IP
+})
+
+/** /api/whatsapp/conversations — inbox conversation listing */
+export const whatsappConversationLimiter = createRateLimiter({
+  name: 'whatsapp-conversation',
+  uniqueTokenPerInterval: 500,
+  interval: 60_000,
+  maxRequests: 60, // 60 conversation reads / minute / IP
+})
+
+/** /api/whatsapp/conversations/:id/messages — message thread reads */
+export const whatsappInboxLimiter = createRateLimiter({
+  name: 'whatsapp-inbox',
+  uniqueTokenPerInterval: 500,
+  interval: 60_000,
+  maxRequests: 120, // 120 message fetches / minute / IP (frequent polling)
+})
+
+/** /api/whatsapp/keys — API key management (tight limit — bootstrap endpoint) */
+export const whatsappKeysLimiter = createRateLimiter({
+  name: 'whatsapp-keys',
+  uniqueTokenPerInterval: 100,
+  interval: 60_000,
+  maxRequests: 5, // 5 key operations / minute / IP
+})

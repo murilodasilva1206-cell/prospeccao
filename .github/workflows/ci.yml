@@ -77,6 +77,12 @@ jobs:
       NODE_ENV: test
       # 64 hex chars = 32 bytes AES key — test placeholder only, never production
       CREDENTIALS_ENCRYPTION_KEY: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      # S3 / media pipeline — test placeholders only; MSW mocks actual calls
+      MEDIA_STORAGE_ENABLED: 'true'
+      S3_BUCKET: test-bucket
+      S3_ACCESS_KEY_ID: test-key-id
+      S3_SECRET_ACCESS_KEY: test-secret-key
+      S3_REGION: us-east-1
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -124,6 +130,11 @@ jobs:
       NODE_ENV: test
       # 64 hex chars = 32 bytes AES key — test placeholder only, never production
       CREDENTIALS_ENCRYPTION_KEY: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      # S3 / media pipeline — test placeholders; MSW mocks actual S3 calls
+      S3_BUCKET: test-bucket
+      S3_ACCESS_KEY_ID: test-key-id
+      S3_SECRET_ACCESS_KEY: test-secret-key
+      S3_REGION: us-east-1
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -203,6 +214,95 @@ jobs:
             );
 
             CREATE INDEX IF NOT EXISTS idx_webhook_events_lookup ON webhook_events(provider, event_id);
+
+            -- Migration 003: workspace_api_keys
+            CREATE TABLE IF NOT EXISTS workspace_api_keys (
+              id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              workspace_id TEXT NOT NULL,
+              key_hash     TEXT NOT NULL UNIQUE,
+              label        TEXT NOT NULL,
+              created_by   TEXT,
+              revoked_at   TIMESTAMPTZ,
+              last_used_at TIMESTAMPTZ,
+              created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_workspace_api_keys_hash
+              ON workspace_api_keys(key_hash) WHERE revoked_at IS NULL;
+            CREATE INDEX IF NOT EXISTS idx_workspace_api_keys_workspace
+              ON workspace_api_keys(workspace_id) WHERE revoked_at IS NULL;
+
+            -- Migration 004: conversations
+            CREATE TABLE IF NOT EXISTS conversations (
+              id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              channel_id      UUID NOT NULL REFERENCES whatsapp_channels(id) ON DELETE CASCADE,
+              workspace_id    TEXT NOT NULL,
+              contact_phone   TEXT NOT NULL,
+              contact_name    TEXT,
+              status          TEXT NOT NULL DEFAULT 'open'
+                                CHECK (status IN ('open','resolved','ai_handled')),
+              last_message_at TIMESTAMPTZ,
+              unread_count    INTEGER NOT NULL DEFAULT 0,
+              ai_enabled      BOOLEAN NOT NULL DEFAULT false,
+              created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              UNIQUE (channel_id, contact_phone)
+            );
+            CREATE INDEX IF NOT EXISTS idx_conversations_workspace
+              ON conversations(workspace_id, status);
+            CREATE INDEX IF NOT EXISTS idx_conversations_channel
+              ON conversations(channel_id);
+            DROP TRIGGER IF EXISTS trg_conversations_updated_at ON conversations;
+            CREATE TRIGGER trg_conversations_updated_at
+              BEFORE UPDATE ON conversations
+              FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+            -- Migration 005: messages
+            CREATE TABLE IF NOT EXISTS messages (
+              id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              conversation_id     UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+              channel_id          UUID NOT NULL REFERENCES whatsapp_channels(id) ON DELETE CASCADE,
+              provider_message_id TEXT,
+              direction           TEXT NOT NULL CHECK (direction IN ('inbound','outbound')),
+              message_type        TEXT NOT NULL
+                CHECK (message_type IN ('text','image','audio','video','document','sticker','reaction')),
+              status              TEXT NOT NULL DEFAULT 'queued'
+                CHECK (status IN ('queued','sent','delivered','read','failed')),
+              body                TEXT,
+              media_s3_key        TEXT,
+              media_mime_type     TEXT,
+              media_filename      TEXT,
+              media_size_bytes    BIGINT,
+              reaction_to_msg_id  UUID REFERENCES messages(id),
+              sent_by             TEXT,
+              ai_decision_log     JSONB,
+              raw_event           JSONB,
+              created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_messages_conversation
+              ON messages(conversation_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_messages_provider_id
+              ON messages(channel_id, provider_message_id);
+            CREATE INDEX IF NOT EXISTS idx_messages_retention ON messages(created_at);
+            DROP TRIGGER IF EXISTS trg_messages_updated_at ON messages;
+            CREATE TRIGGER trg_messages_updated_at
+              BEFORE UPDATE ON messages
+              FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+            -- Migration 006: audit_log
+            CREATE TABLE IF NOT EXISTS audit_log (
+              id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              workspace_id  TEXT NOT NULL,
+              actor         TEXT NOT NULL,
+              action        TEXT NOT NULL,
+              resource_type TEXT,
+              resource_id   TEXT,
+              meta          JSONB,
+              ip            TEXT,
+              created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_audit_log_workspace
+              ON audit_log(workspace_id, created_at DESC);
           SQL
       - name: Run integration + contract tests
         run: npm run test:integration

@@ -20,6 +20,9 @@ export const logger = pino({
       'app_secret',            // WhatsApp Meta app secret
       'webhook_secret',        // HMAC signing secret
       'credentials_encrypted', // AES-GCM blob — never log raw
+      'media_s3_key',          // S3 object path — could reveal storage structure
+      'key_hash',              // API key hash — never expose
+      'raw_key',               // plaintext API key — never log
     ],
     censor: '[Redacted]',
   },

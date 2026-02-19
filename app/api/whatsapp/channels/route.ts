@@ -1,5 +1,8 @@
-// GET  /api/whatsapp/channels?workspace_id=<id>  — list channels
-// POST /api/whatsapp/channels                     — create channel
+// GET  /api/whatsapp/channels  — list channels for the authenticated workspace
+// POST /api/whatsapp/channels  — create channel
+//
+// Auth: Bearer wk_... workspace API key required on both verbs.
+// workspace_id is always taken from the token — never from query params or body.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { ZodError } from 'zod'
@@ -13,6 +16,7 @@ import { encryptCredentials } from '@/lib/whatsapp/crypto'
 import { createChannel, findChannelsByWorkspace } from '@/lib/whatsapp/channel-repo'
 import { getAdapter } from '@/lib/whatsapp/adapters/factory'
 import { updateChannelStatus } from '@/lib/whatsapp/channel-repo'
+import { requireWorkspaceAuth, authErrorResponse } from '@/lib/whatsapp/auth-middleware'
 
 export async function GET(request: NextRequest) {
   const requestId = crypto.randomUUID()
@@ -27,23 +31,22 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  const workspace_id = request.nextUrl.searchParams.get('workspace_id')
-  if (!workspace_id || workspace_id.trim().length === 0) {
-    return NextResponse.json({ error: 'workspace_id e obrigatorio' }, { status: 400 })
-  }
-
   try {
     const client = await pool.connect()
     try {
-      const channels = await findChannelsByWorkspace(client, workspace_id)
+      const auth = await requireWorkspaceAuth(request, client)
+
+      const channels = await findChannelsByWorkspace(client, auth.workspace_id)
       // Strip credentials_encrypted and webhook_secret from list response
       const safe = channels.map(({ credentials_encrypted: _c, webhook_secret: _w, ...rest }) => rest)
-      log.info({ workspace_id, count: safe.length }, 'Canais listados')
+      log.info({ workspace_id: auth.workspace_id, count: safe.length }, 'Canais listados')
       return NextResponse.json({ data: safe })
     } finally {
       client.release()
     }
   } catch (err) {
+    const res = authErrorResponse(err)
+    if (res) return res
     log.error({ err }, 'Erro ao listar canais')
     return NextResponse.json({ error: 'Erro interno do servidor' }, { status: 500 })
   }
@@ -62,29 +65,30 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  let body
-  try {
-    const raw = await request.json()
-    body = ChannelCreateSchema.parse(raw)
-  } catch (err) {
-    if (err instanceof ZodError) {
-      return NextResponse.json({ error: 'Parametros invalidos', details: err.issues }, { status: 400 })
-    }
-    return NextResponse.json({ error: 'JSON invalido no corpo da requisicao' }, { status: 400 })
-  }
-
-  // Encrypt credentials before touching the DB
-  const credentials_encrypted = encryptCredentials(body.credentials)
-
-  // Generate a server-side HMAC signing secret (never user-provided)
-  const webhook_secret = randomBytes(32).toString('hex')
-
   try {
     const client = await pool.connect()
     try {
+      // Auth first — reject unauthenticated requests before parsing body or doing crypto
+      const auth = await requireWorkspaceAuth(request, client)
+
+      let body
+      try {
+        const raw = await request.json()
+        body = ChannelCreateSchema.parse(raw)
+      } catch (err) {
+        if (err instanceof ZodError) {
+          return NextResponse.json({ error: 'Parametros invalidos', details: err.issues }, { status: 400 })
+        }
+        return NextResponse.json({ error: 'JSON invalido no corpo da requisicao' }, { status: 400 })
+      }
+
+      // Encrypt credentials and generate webhook secret after auth succeeds
+      const credentials_encrypted = encryptCredentials(body.credentials)
+      const webhook_secret = randomBytes(32).toString('hex')
+
       // Create channel row (status=DISCONNECTED)
       const channel = await createChannel(client, {
-        workspace_id: body.workspace_id,
+        workspace_id: auth.workspace_id,
         name: body.name,
         provider: body.provider,
         credentials_encrypted,
@@ -101,12 +105,12 @@ export async function POST(request: NextRequest) {
         })
         channel.external_instance_id = external_instance_id
       } catch (adapterErr) {
-        // Credential validation failed — delete the row and surface the error
+        // Credential validation failed — delete the row; never surface adapter internals
         const { deleteChannel } = await import('@/lib/whatsapp/channel-repo')
         await deleteChannel(client, channel.id)
         log.warn({ err: adapterErr }, 'Validacao de credenciais falhou — canal removido')
         return NextResponse.json(
-          { error: 'Credenciais invalidas ou provider inacessivel', detail: String(adapterErr) },
+          { error: 'Credenciais invalidas ou provider inacessivel' },
           { status: 422 },
         )
       }
@@ -125,6 +129,8 @@ export async function POST(request: NextRequest) {
       client.release()
     }
   } catch (err) {
+    const res = authErrorResponse(err)
+    if (res) return res
     log.error({ err }, 'Erro ao criar canal')
     return NextResponse.json({ error: 'Erro interno do servidor' }, { status: 500 })
   }

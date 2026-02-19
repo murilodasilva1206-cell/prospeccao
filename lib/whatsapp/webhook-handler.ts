@@ -13,7 +13,6 @@
 //   9. Return normalized event for caller (route can emit to queues/websockets)
 // ---------------------------------------------------------------------------
 
-import type { PoolClient } from 'pg'
 import { decryptCredentials } from './crypto'
 import { findChannelById, updateChannelStatus } from './channel-repo'
 import { markEventSeen } from './webhook-repo'
@@ -127,4 +126,164 @@ export class SignatureInvalidError extends Error {
     super('Assinatura do webhook invalida ou ausente')
     this.name = 'SignatureInvalidError'
   }
+}
+
+// ---------------------------------------------------------------------------
+// Inbound message handler — persists message + triggers AI when enabled
+// ---------------------------------------------------------------------------
+
+import { upsertConversation, incrementUnread } from './conversation-repo'
+import { insertMessage } from './message-repo'
+import { routeInboundToAi } from './ai-inbox-agent'
+import type { PoolClient } from 'pg'
+
+/**
+ * Handles a normalized 'message.received' event:
+ *   1. Upserts the conversation (one per channel+contact_phone pair)
+ *   2. Increments unread counter
+ *   3. Persists the inbound message row
+ *   4. If ai_enabled on the conversation, routes body to the AI agent
+ *   5. If AI replies, persists the outbound AI message row
+ *
+ * This function does NOT send the WhatsApp reply — the caller is responsible
+ * for calling the adapter's sendMessage() after checking result.shouldReply.
+ */
+export async function handleInboundMessage(
+  client: PoolClient,
+  event: WhatsAppEvent,
+  channel: { id: string; workspace_id: string; ai_enabled?: boolean },
+): Promise<{
+  conversation_id: string
+  message_id: string
+  aiResult: import('./ai-inbox-agent').InboxAiResult | null
+}> {
+  const payload = event.payload as {
+    from?: string
+    contact_name?: string
+    message_id?: string
+    message_type?: string
+    body?: string
+    media_url?: string
+    media_id?: string
+    mime_type?: string
+    filename?: string
+    media_size_bytes?: number
+    reaction_to?: string
+    emoji?: string
+  }
+
+  const contactPhone = String(payload.from ?? '')
+  const contactName = payload.contact_name ? String(payload.contact_name) : null
+  const providerMessageId = payload.message_id ? String(payload.message_id) : null
+  const messageType = (payload.message_type ?? 'text') as import('./types').MessageType
+  const body = payload.body ? String(payload.body) : null
+
+  // 1. Upsert conversation
+  const conversation = await upsertConversation(client, {
+    channel_id: channel.id,
+    workspace_id: channel.workspace_id,
+    contact_phone: contactPhone,
+    contact_name: contactName,
+  })
+
+  // 2. Increment unread counter
+  await incrementUnread(client, conversation.id)
+
+  // 3. Persist inbound message
+  const message = await insertMessage(client, {
+    conversation_id: conversation.id,
+    channel_id: channel.id,
+    provider_message_id: providerMessageId,
+    direction: 'inbound',
+    message_type: messageType,
+    status: 'delivered',
+    body,
+    media_mime_type: payload.mime_type ?? null,
+    media_filename: payload.filename ?? null,
+    media_size_bytes: payload.media_size_bytes ?? null,
+    reaction_to_msg_id: payload.reaction_to ?? null,
+    sent_by: 'webhook',
+    raw_event: event.payload as Record<string, unknown>,
+  })
+
+  // 4. AI routing — only if conversation has ai_enabled and there is a text body
+  let aiResult: import('./ai-inbox-agent').InboxAiResult | null = null
+  if (conversation.ai_enabled && body && body.trim().length > 0) {
+    const { findChannelById } = await import('./channel-repo')
+    const fullChannel = await findChannelById(client, channel.id)
+    if (fullChannel) {
+      aiResult = await routeInboundToAi(
+        {
+          body,
+          from: contactPhone,
+          conversation_id: conversation.id,
+        },
+        fullChannel,
+      )
+
+      // 5. If AI decided to reply, persist outbound AI message
+      if (aiResult.shouldReply && aiResult.replyText) {
+        await insertMessage(client, {
+          conversation_id: conversation.id,
+          channel_id: channel.id,
+          direction: 'outbound',
+          message_type: 'text',
+          status: 'queued',
+          body: aiResult.replyText,
+          sent_by: 'ai',
+          ai_decision_log: aiResult.decisionLog,
+        })
+      }
+    }
+  }
+
+  return {
+    conversation_id: conversation.id,
+    message_id: message.id,
+    aiResult,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Status update handler — maps provider delivery/read receipts to DB
+// ---------------------------------------------------------------------------
+
+import { updateMessageStatus } from './message-repo'
+import type { MessageStatus } from './types'
+
+/**
+ * Handles 'message.delivered' and 'message.read' events.
+ * Updates the status column of the matching outbound message row.
+ * Matches by (channel_id, provider_message_id) — idempotent.
+ *
+ * Returns true if a row was updated, false if no matching message was found
+ * (e.g. the message was sent before persistence was introduced).
+ */
+export async function handleStatusUpdate(
+  client: PoolClient,
+  event: WhatsAppEvent,
+  channel: { id: string },
+): Promise<boolean> {
+  const payload = event.payload as {
+    message_id?: string
+    status?: string
+  }
+
+  const providerMessageId = payload.message_id ? String(payload.message_id) : null
+  if (!providerMessageId) return false
+
+  const statusMap: Record<string, MessageStatus> = {
+    'message.sent':      'sent',
+    'message.delivered': 'delivered',
+    'message.read':      'read',
+  }
+
+  const newStatus = statusMap[event.type]
+  if (!newStatus) return false
+
+  return updateMessageStatus(client, {
+    channel_id: channel.id,
+    provider_message_id: providerMessageId,
+    status: newStatus,
+  })
 }

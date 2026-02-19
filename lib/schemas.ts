@@ -118,7 +118,9 @@ const ChannelCredentialsSchema = z.object({
 })
 
 export const ChannelCreateSchema = z.object({
-  workspace_id: SafeString(100),
+  // workspace_id is ignored in the route — the authoritative value always comes from
+  // the Bearer token (auth.workspace_id). Kept optional for backward-compat with existing clients.
+  workspace_id: SafeString(100).optional(),
   name: SafeString(100),
   provider: z.enum(WHATSAPP_PROVIDERS),
   credentials: ChannelCredentialsSchema,
@@ -139,3 +141,74 @@ export const WebhookPathSchema = z.object({
   provider: z.enum(WHATSAPP_PROVIDERS),
   channelId: z.string().uuid('channelId deve ser um UUID valido'),
 })
+
+// ---------------------------------------------------------------------------
+// /api/whatsapp/keys — workspace API key management
+// ---------------------------------------------------------------------------
+
+export const ApiKeyCreateSchema = z.object({
+  // workspace_id is ignored in the route — the authoritative value always comes from
+  // the Bearer token (auth.workspace_id). Kept optional for backward-compat with existing clients.
+  workspace_id: SafeString(100).optional(),
+  label: SafeString(100),
+  created_by: SafeString(200).optional(),
+})
+export type ApiKeyCreate = z.infer<typeof ApiKeyCreateSchema>
+
+// ---------------------------------------------------------------------------
+// /api/whatsapp/channels/:id/send-media — media message sending
+// ---------------------------------------------------------------------------
+
+export const MEDIA_MESSAGE_TYPES = ['image', 'audio', 'video', 'document', 'sticker'] as const
+export type MediaMessageType = (typeof MEDIA_MESSAGE_TYPES)[number]
+
+export const SendMediaSchema = z.object({
+  to: z.string().regex(/^\d{8,15}$/, 'Numero deve conter apenas digitos (8-15)'),
+  type: z.enum(MEDIA_MESSAGE_TYPES),
+  caption: z.string().max(1024).optional(),
+})
+export type SendMedia = z.infer<typeof SendMediaSchema>
+
+// ---------------------------------------------------------------------------
+// /api/whatsapp/channels/:id/send-reaction — reaction messages
+// ---------------------------------------------------------------------------
+
+export const SendReactionSchema = z.object({
+  to: z.string().regex(/^\d{8,15}$/, 'Numero deve conter apenas digitos (8-15)'),
+  emoji: z.string().min(1).max(8),
+  // Provider message IDs are NOT UUIDs — Meta uses wamid.xxx, Evolution uses arbitrary strings.
+  target_provider_message_id: z.string().min(8).max(200),
+})
+export type SendReaction = z.infer<typeof SendReactionSchema>
+
+// ---------------------------------------------------------------------------
+// /api/whatsapp/conversations — conversation management
+// ---------------------------------------------------------------------------
+
+export const ConversationPatchSchema = z.object({
+  status: z.enum(['open', 'resolved', 'ai_handled']).optional(),
+  ai_enabled: z.boolean().optional(),
+})
+export type ConversationPatch = z.infer<typeof ConversationPatchSchema>
+
+// ---------------------------------------------------------------------------
+// /api/whatsapp/conversations/:id/messages — message pagination
+// ---------------------------------------------------------------------------
+
+export const MessagePaginationSchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  before: z.string().uuid().optional(), // cursor: fetch messages older than this message ID
+})
+export type MessagePagination = z.infer<typeof MessagePaginationSchema>
+
+// ---------------------------------------------------------------------------
+// AI inbox agent response contract
+// ---------------------------------------------------------------------------
+
+export const InboxAiResponseSchema = z.object({
+  action: z.enum(['reply', 'escalate', 'ignore']),
+  reply_text: z.string().max(4096).optional(),
+  confidence: z.number().min(0).max(1),
+  reason: z.string().max(500).optional(),
+})
+export type InboxAiResponse = z.infer<typeof InboxAiResponseSchema>

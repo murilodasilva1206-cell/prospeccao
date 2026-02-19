@@ -22,6 +22,38 @@ const EnvSchema = z.object({
     .string()
     .length(64, 'CREDENTIALS_ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes)')
     .regex(/^[0-9a-fA-F]{64}$/, 'CREDENTIALS_ENCRYPTION_KEY must be a valid hex string'),
+
+  // ---------------------------------------------------------------------------
+  // S3-compatible media storage (AWS S3 or Cloudflare R2)
+  //
+  // Set MEDIA_STORAGE_ENABLED=true to activate the media pipeline.
+  // When false (default), the app starts without S3 credentials; media routes
+  // respond with a controlled 503 instead of crashing at startup.
+  // ---------------------------------------------------------------------------
+  MEDIA_STORAGE_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
+  // Required only when MEDIA_STORAGE_ENABLED=true (validated via superRefine below)
+  S3_BUCKET: z.string().optional(),
+  S3_ACCESS_KEY_ID: z.string().optional(),
+  S3_SECRET_ACCESS_KEY: z.string().optional(),
+  S3_REGION: z.string().optional(),
+  // Optional: set for Cloudflare R2 or custom S3-compatible endpoints
+  S3_ENDPOINT: z.string().url().optional(),
+}).superRefine((data, ctx) => {
+  if (!data.MEDIA_STORAGE_ENABLED) return
+  const required: Array<keyof typeof data> = ['S3_BUCKET', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY', 'S3_REGION']
+  for (const key of required) {
+    if (!data[key]) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key],
+        message: `${key} is required when MEDIA_STORAGE_ENABLED=true`,
+      })
+    }
+  }
 })
 
 // parse() throws ZodError at module load time if any required var is missing

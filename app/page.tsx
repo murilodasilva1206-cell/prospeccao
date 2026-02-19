@@ -45,13 +45,13 @@ export default function Home() {
           </div>
 
           <a
-            href="/whatsapp/canais"
+            href="/whatsapp"
             className="rounded-xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
           >
-            <p className="text-sm font-semibold text-emerald-900">Canais WhatsApp</p>
-            <p className="mt-1 text-xs text-emerald-700">Painel de conexoes</p>
+            <p className="text-sm font-semibold text-emerald-900">Modulo WhatsApp</p>
+            <p className="mt-1 text-xs text-emerald-700">OmniChannel</p>
             <p className="mt-2 text-xs text-emerald-800/80">
-              Crie canais Meta, Evolution e UAZAPI, conecte e acompanhe status.
+              Canais, inbox e chaves API para operacao completa.
             </p>
           </a>
         </div>
@@ -71,8 +71,8 @@ POST /api/agente
 # Exportar para CSV
 GET /api/export?uf=MG&situacao_cadastral=ATIVA&maxRows=1000
 
-# Gerenciar canais WhatsApp
-GET /whatsapp/canais`}
+# Gerenciar modulo WhatsApp
+GET /whatsapp`}
           </pre>
         </div>
       </main>

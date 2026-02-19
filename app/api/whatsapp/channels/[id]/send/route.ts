@@ -1,4 +1,5 @@
 // POST /api/whatsapp/channels/:id/send — send a text message via the channel
+// Auth: Bearer wk_... workspace API key required.
 
 import { NextRequest, NextResponse } from 'next/server'
 import pool from '@/lib/database'
@@ -9,6 +10,8 @@ import { findChannelById } from '@/lib/whatsapp/channel-repo'
 import { decryptCredentials } from '@/lib/whatsapp/crypto'
 import { getAdapter } from '@/lib/whatsapp/adapters/factory'
 import { SendMessageSchema } from '@/lib/schemas'
+import { requireWorkspaceAuth, authErrorResponse } from '@/lib/whatsapp/auth-middleware'
+import { ChannelIdSchema } from '@/lib/whatsapp/route-params'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -25,7 +28,9 @@ export async function POST(request: NextRequest, { params }: Params) {
     )
   }
 
-  const { id } = await params
+  const idParsed = ChannelIdSchema.safeParse((await params).id)
+  if (!idParsed.success) return NextResponse.json({ error: 'id invalido' }, { status: 400 })
+  const id = idParsed.data
 
   let body: unknown
   try {
@@ -47,9 +52,14 @@ export async function POST(request: NextRequest, { params }: Params) {
   try {
     const client = await pool.connect()
     try {
+      const auth = await requireWorkspaceAuth(request, client)
+
       const channel = await findChannelById(client, id)
       if (!channel) {
         return NextResponse.json({ error: 'Canal nao encontrado' }, { status: 404 })
+      }
+      if (channel.workspace_id !== auth.workspace_id) {
+        return NextResponse.json({ error: 'Acesso negado' }, { status: 403 })
       }
 
       if (channel.status !== 'CONNECTED') {
@@ -76,6 +86,8 @@ export async function POST(request: NextRequest, { params }: Params) {
       client.release()
     }
   } catch (err) {
+    const res = authErrorResponse(err)
+    if (res) return res
     log.error({ err }, 'Erro ao enviar mensagem')
     return NextResponse.json({ error: 'Erro interno do servidor' }, { status: 500 })
   }

@@ -1,0 +1,20 @@
+{
+  "entry": [{
+    "changes": [{
+      "value": {
+        "messaging_product": "whatsapp",
+        "metadata": { "display_phone_number": "15551234567", "phone_number_id": "109876543210" },
+        "messages": [{
+          "id": "wamid.REACT001",
+          "from": "5511999990002",
+          "timestamp": "1700000200",
+          "type": "reaction",
+          "reaction": {
+            "message_id": "wamid.ORIGINAL001",
+            "emoji": "👍"
+          }
+        }]
+      }
+    }]
+  }]
+}
