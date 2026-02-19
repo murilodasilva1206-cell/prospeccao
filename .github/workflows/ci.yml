@@ -1,0 +1,163 @@
+name: CI Security Gates
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Dependency audit — fail on moderate+ vulnerabilities
+  # ---------------------------------------------------------------------------
+  security-audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - name: npm audit (fail on moderate+)
+        run: npm audit --audit-level=moderate
+
+  # ---------------------------------------------------------------------------
+  # 2. Secret scan — detect secrets in commit history
+  # ---------------------------------------------------------------------------
+  secret-scan:
+    name: Secret Scan (TruffleHog)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history required for trufflehog diff scan
+      - name: TruffleHog OSS
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --debug --only-verified
+
+  # ---------------------------------------------------------------------------
+  # 3. Lint + TypeScript typecheck
+  # ---------------------------------------------------------------------------
+  lint-and-typecheck:
+    name: Lint + Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - name: ESLint (with security plugin)
+        run: npm run lint
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+  # ---------------------------------------------------------------------------
+  # 4. Unit + security tests (no DB required)
+  # ---------------------------------------------------------------------------
+  unit-tests:
+    name: Unit + Security Tests
+    runs-on: ubuntu-latest
+    env:
+      # Minimal env vars needed for lib/env.ts to pass boot validation in tests
+      DB_HOST: localhost
+      DB_PORT: '5432'
+      DB_NAME: prospeccao_test
+      DB_USER: test_user
+      DB_PASSWORD: testpassword
+      OPENROUTER_API_KEY: sk-or-test-placeholder-for-unit-tests-only
+      OPENROUTER_MODEL: anthropic/claude-3.5-sonnet
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - name: Run unit + security tests with coverage
+        run: npm run test:coverage
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # 5. Integration tests (requires PostgreSQL service container)
+  # ---------------------------------------------------------------------------
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: prospeccao_test
+          POSTGRES_USER: prospeccao_app
+          POSTGRES_PASSWORD: testpassword_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DB_HOST: localhost
+      DB_PORT: '5432'
+      DB_NAME: prospeccao_test
+      DB_USER: prospeccao_app
+      DB_PASSWORD: testpassword_ci
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY_TEST }}
+      OPENROUTER_MODEL: anthropic/claude-3.5-sonnet
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - name: Wait for PostgreSQL
+        run: |
+          until pg_isready -h localhost -p 5432; do
+            echo "Waiting for PostgreSQL..."
+            sleep 2
+          done
+      - name: Create schema and seed test data
+        run: |
+          PGPASSWORD=testpassword_ci psql -h localhost -U prospeccao_app -d prospeccao_test <<'SQL'
+            CREATE TABLE IF NOT EXISTS estabelecimentos (
+              cnpj_completo       VARCHAR(14) PRIMARY KEY,
+              razao_social        TEXT NOT NULL,
+              nome_fantasia       TEXT,
+              uf                  CHAR(2) NOT NULL,
+              municipio           TEXT NOT NULL,
+              cnae_principal      VARCHAR(20),
+              situacao_cadastral  VARCHAR(20) NOT NULL DEFAULT 'ATIVA',
+              telefone1           VARCHAR(30),
+              telefone2           VARCHAR(30),
+              correio_eletronico  VARCHAR(115)
+            );
+
+            INSERT INTO estabelecimentos
+              (cnpj_completo, razao_social, nome_fantasia, uf, municipio, cnae_principal,
+               situacao_cadastral, telefone1, telefone2, correio_eletronico)
+            VALUES
+              ('11222333000181','CLINICA ODONTO LTDA','Odonto SP','SP','SAO PAULO',
+               '8630-5/04','ATIVA','11999990000',NULL,'contato@odonto.com'),
+              ('22333444000192','RESTAURANTE BOM SABOR EIRELI',NULL,'RJ','RIO DE JANEIRO',
+               '5611-2/01','ATIVA','21988887777',NULL,NULL)
+            ON CONFLICT DO NOTHING;
+          SQL
+      - name: Run integration + contract tests
+        run: npm run test:integration
