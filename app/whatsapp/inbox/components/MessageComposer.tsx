@@ -8,7 +8,6 @@ interface MessageComposerProps {
   channelId: string | null
   channelProvider?: 'META_CLOUD' | 'EVOLUTION' | 'UAZAPI'
   contactPhone: string | null
-  apiKey: string
   onMessageSent: () => void
 }
 
@@ -22,7 +21,6 @@ export function MessageComposer({
   channelId,
   channelProvider,
   contactPhone,
-  apiKey,
   onMessageSent,
 }: MessageComposerProps) {
   const [text, setText] = useState('')
@@ -60,7 +58,6 @@ export function MessageComposer({
 
         const res = await fetch(`/api/whatsapp/channels/${channelId}/send-media`, {
           method: 'POST',
-          headers: { Authorization: `Bearer ${apiKey}` },
           body: form,
         })
         if (!res.ok) {
@@ -75,7 +72,7 @@ export function MessageComposer({
         if (fileInputRef.current) fileInputRef.current.value = ''
       }
     },
-    [channelId, contactPhone, apiKey, onMessageSent],
+    [channelId, contactPhone, onMessageSent],
   )
 
   const handleSendText = useCallback(async () => {
@@ -85,10 +82,7 @@ export function MessageComposer({
     try {
       const res = await fetch(`/api/whatsapp/conversations/${conversationId}/messages`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: text.trim() }),
       })
       if (!res.ok) {
@@ -102,7 +96,7 @@ export function MessageComposer({
     } finally {
       setSending(false)
     }
-  }, [text, conversationId, apiKey, onMessageSent])
+  }, [text, conversationId, onMessageSent])
 
   const handleSendTemplate = useCallback(
     async (templateName: string, language: string) => {
@@ -113,10 +107,7 @@ export function MessageComposer({
       try {
         const res = await fetch(`/api/whatsapp/channels/${channelId}/send-template`, {
           method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             to: contactPhone.replace(/[^\d]/g, ''),
             name: templateName,
@@ -135,7 +126,7 @@ export function MessageComposer({
         setSending(false)
       }
     },
-    [apiKey, channelId, contactPhone, onMessageSent],
+    [channelId, contactPhone, onMessageSent],
   )
 
   const stopRecording = useCallback(async () => {

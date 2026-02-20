@@ -8,9 +8,9 @@
 // Step 3: Review & send
 //
 // Security:
-//   - wk_ API key kept in React state only (never localStorage)
 //   - confirmation_token echoed back from campaign creation (never guessable)
 //   - META_CLOUD enforces template-only messages (text blocked at API level)
+//   - Auth via HttpOnly session cookie (sent automatically by browser)
 // ---------------------------------------------------------------------------
 
 import { useState, useEffect, useCallback } from 'react'
@@ -39,7 +39,6 @@ interface SendResult {
 }
 
 interface Props {
-  apiKey: string
   campaignId: string
   confirmationToken: string
   recipients: PublicEmpresa[]
@@ -59,13 +58,10 @@ function providerLabel(p: string) {
   return p
 }
 
-async function apiPost<T>(url: string, apiKey: string, body: unknown): Promise<T> {
+async function apiPost<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
   if (!res.ok) {
@@ -80,7 +76,6 @@ async function apiPost<T>(url: string, apiKey: string, body: unknown): Promise<T
 // ---------------------------------------------------------------------------
 
 export default function CampaignWizard({
-  apiKey,
   campaignId,
   confirmationToken,
   recipients,
@@ -118,14 +113,12 @@ export default function CampaignWizard({
   // ---------------------------------------------------------------------------
   useEffect(() => {
     setChannelsLoading(true)
-    fetch('/api/whatsapp/channels', {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    })
+    fetch('/api/whatsapp/channels')
       .then((r) => {
         if (!r.ok) {
           const msg =
             r.status === 401 || r.status === 403
-              ? 'Chave de API invalida ou sem permissao'
+              ? 'Sessao expirada. Faca login novamente.'
               : `Erro ao carregar canais (${r.status})`
           throw new Error(msg)
         }
@@ -138,7 +131,7 @@ export default function CampaignWizard({
         setError(err instanceof Error ? err.message : 'Nao foi possivel carregar os canais.'),
       )
       .finally(() => setChannelsLoading(false))
-  }, [apiKey])
+  }, [])
 
   // When template selection changes, update customBody
   useEffect(() => {
@@ -158,14 +151,14 @@ export default function CampaignWizard({
       // Confirm campaign only once — token is single-use and campaign leaves 'draft'
       // immediately. Re-calling after a back-navigation would 409.
       if (!confirmed) {
-        await apiPost(`/api/campaigns/${campaignId}/confirm`, apiKey, {
+        await apiPost(`/api/campaigns/${campaignId}/confirm`, {
           confirmation_token: confirmationToken,
         })
         setConfirmed(true)
       }
       // Select channel — idempotent; also accepted when status is 'awaiting_message'
       // so the user can change channel after going back from step 2.
-      await apiPost(`/api/campaigns/${campaignId}/select-channel`, apiKey, {
+      await apiPost(`/api/campaigns/${campaignId}/select-channel`, {
         channel_id: selectedChannelId,
       })
       setStep(2)
@@ -174,7 +167,7 @@ export default function CampaignWizard({
     } finally {
       setLoading(false)
     }
-  }, [selectedChannelId, campaignId, apiKey, confirmationToken, confirmed])
+  }, [selectedChannelId, campaignId, confirmationToken, confirmed])
 
   const goToStep3 = useCallback(async () => {
     if (!selectedChannel) return
@@ -183,7 +176,7 @@ export default function CampaignWizard({
     try {
       if (isMetaCloud) {
         if (!templateName.trim()) throw new Error('Nome do template obrigatorio')
-        await apiPost(`/api/campaigns/${campaignId}/set-message`, apiKey, {
+        await apiPost(`/api/campaigns/${campaignId}/set-message`, {
           message_type: 'template',
           message_content: {
             type: 'template',
@@ -194,7 +187,7 @@ export default function CampaignWizard({
         })
       } else {
         if (!customBody.trim()) throw new Error('Mensagem nao pode estar vazia')
-        await apiPost(`/api/campaigns/${campaignId}/set-message`, apiKey, {
+        await apiPost(`/api/campaigns/${campaignId}/set-message`, {
           message_type: 'text',
           message_content: { type: 'text', body: customBody.trim() },
         })
@@ -205,7 +198,7 @@ export default function CampaignWizard({
     } finally {
       setLoading(false)
     }
-  }, [selectedChannel, isMetaCloud, templateName, templateLang, customBody, campaignId, apiKey])
+  }, [selectedChannel, isMetaCloud, templateName, templateLang, customBody, campaignId])
 
   const handleSend = useCallback(async () => {
     setLoading(true)
@@ -219,7 +212,6 @@ export default function CampaignWizard({
       do {
         const res = await apiPost<{ data: SendResult }>(
           `/api/campaigns/${campaignId}/send`,
-          apiKey,
           {},
         )
         result = res.data
@@ -235,7 +227,7 @@ export default function CampaignWizard({
     } finally {
       setLoading(false)
     }
-  }, [campaignId, apiKey, onComplete])
+  }, [campaignId, onComplete])
 
   // ---------------------------------------------------------------------------
   // Preview text (for non-Meta)

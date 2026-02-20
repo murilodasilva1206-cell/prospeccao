@@ -19,12 +19,11 @@ export interface ConversationItem {
 }
 
 interface UseConversationsOptions {
-  apiKey: string
   pollInterval?: number
   status?: string
 }
 
-export function useConversations({ apiKey, pollInterval = 5000, status }: UseConversationsOptions) {
+export function useConversations({ pollInterval = 5000, status }: UseConversationsOptions = {}) {
   const [conversations, setConversations] = useState<ConversationItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -34,9 +33,7 @@ export function useConversations({ apiKey, pollInterval = 5000, status }: UseCon
       const params = new URLSearchParams({ limit: '50' })
       if (status) params.set('status', status)
 
-      const res = await fetch(`/api/whatsapp/conversations?${params}`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-      })
+      const res = await fetch(`/api/whatsapp/conversations?${params}`)
 
       if (!res.ok) {
         const data = await res.json() as { error?: string }
@@ -51,7 +48,7 @@ export function useConversations({ apiKey, pollInterval = 5000, status }: UseCon
     } finally {
       setLoading(false)
     }
-  }, [apiKey, status])
+  }, [status])
 
   useEffect(() => {
     fetchConversations()
@@ -63,10 +60,7 @@ export function useConversations({ apiKey, pollInterval = 5000, status }: UseCon
     async (id: string, patch: { status?: string; ai_enabled?: boolean }) => {
       const res = await fetch(`/api/whatsapp/conversations/${id}`, {
         method: 'PATCH',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
       })
       if (!res.ok) {
@@ -75,7 +69,7 @@ export function useConversations({ apiKey, pollInterval = 5000, status }: UseCon
       }
       await fetchConversations()
     },
-    [apiKey, fetchConversations],
+    [fetchConversations],
   )
 
   return { conversations, loading, error, refetch: fetchConversations, patchConversation }

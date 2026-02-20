@@ -127,54 +127,14 @@ function InsightsPanel({
 }
 
 export default function InboxPage() {
-  const [apiKey, setApiKey] = useState<string>('')
-  const [keyInput, setKeyInput] = useState<string>('')
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
-  const { conversations, loading: convLoading, patchConversation } = useConversations({
-    apiKey,
-  })
+  const { conversations, loading: convLoading, patchConversation } = useConversations()
 
   const selectedConversation = conversations.find((c) => c.id === selectedConversationId) ?? null
 
   const { messages, loading: msgLoading, error: msgError, hasMore, loadMore, refetch } = useMessages({
     conversationId: selectedConversationId,
-    apiKey,
   })
-
-  if (!apiKey) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
-        <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-semibold text-slate-900">Acesso ao Inbox OmniChannel</h2>
-          <p className="mt-2 text-sm text-slate-600">
-            Informe sua chave <code className="rounded bg-slate-100 px-1">wk_...</code> para abrir o atendimento.
-          </p>
-          <input
-            type="password"
-            value={keyInput}
-            onChange={(e) => setKeyInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && keyInput.trim().startsWith('wk_')) setApiKey(keyInput.trim())
-            }}
-            placeholder="wk_..."
-            className="mt-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-          />
-          <button
-            onClick={() => {
-              if (keyInput.trim().startsWith('wk_')) setApiKey(keyInput.trim())
-            }}
-            disabled={!keyInput.trim().startsWith('wk_')}
-            className="mt-3 w-full rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Entrar no Inbox
-          </button>
-          <a href="/whatsapp" className="mt-3 block text-center text-xs text-slate-500 underline hover:text-slate-700">
-            Voltar ao modulo WhatsApp
-          </a>
-        </div>
-      </div>
-    )
-  }
 
   return (
     <main className="min-h-screen bg-slate-100 p-4 md:p-6">
@@ -228,7 +188,6 @@ export default function InboxPage() {
               error={msgError}
               hasMore={hasMore}
               onLoadMore={loadMore}
-              apiKey={apiKey}
               contactName={selectedConversation?.contact_name}
               contactPhone={selectedConversation?.contact_phone}
             />
@@ -239,7 +198,6 @@ export default function InboxPage() {
             channelId={selectedConversation?.channel_id ?? null}
             channelProvider={selectedConversation?.channel_provider}
             contactPhone={selectedConversation?.contact_phone ?? null}
-            apiKey={apiKey}
             onMessageSent={refetch}
           />
         </section>

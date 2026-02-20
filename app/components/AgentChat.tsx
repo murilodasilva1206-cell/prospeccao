@@ -5,12 +5,12 @@
 //
 // Flow:
 //   1. User types a query (e.g. "10 salões em Manaus")
-//   2. POST /api/agente → structured search results
+//   2. POST /api/agente → structured search results (requires session auth)
 //   3. Results shown in chat + "Iniciar primeiro contato" CTA
-//   4. Clicking CTA opens CampaignWizard (requires wk_ key)
+//   4. Clicking CTA opens CampaignWizard
 //
 // Security:
-//   - wk_ API key kept in React state only (never localStorage)
+//   - Only rendered when the user is authenticated (useAuth guard)
 //   - Campaign confirmation_token stored in state until wizard completes
 // ---------------------------------------------------------------------------
 
@@ -20,7 +20,6 @@ import {
   X,
   Send,
   Loader2,
-  KeyRound,
   MessageSquare,
   Users,
   CheckCircle2,
@@ -29,6 +28,7 @@ import {
 } from 'lucide-react'
 import CampaignWizard from './CampaignWizard'
 import { humanizeSearchResult } from '@/lib/agent-humanizer'
+import { useAuth } from '@/app/components/AuthProvider'
 import type { PublicEmpresa } from '@/lib/mask-output'
 
 // ---------------------------------------------------------------------------
@@ -77,15 +77,11 @@ function genId(): string {
 // ---------------------------------------------------------------------------
 
 export default function AgentChat() {
+  const { user, loading: authLoading } = useAuth()
   const [open, setOpen] = useState(false)
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [loading, setLoading] = useState(false)
-
-  // wk_ API key — kept in memory only
-  const [apiKey, setApiKey] = useState('')
-  const [apiKeyInput, setApiKeyInput] = useState('')
-  const [showKeyInput, setShowKeyInput] = useState(false)
 
   // Campaign wizard state
   const [pendingCampaign, setPendingCampaign] = useState<PendingCampaign | null>(null)
@@ -177,18 +173,12 @@ export default function AgentChat() {
   }, [input, loading])
 
   // ---------------------------------------------------------------------------
-  // Start campaign (requires wk_ key)
+  // Start campaign
   // ---------------------------------------------------------------------------
 
   const startCampaign = useCallback(
     async (msg: ChatMessage) => {
       if (!msg.results || msg.results.length === 0) return
-
-      // Need wk_ key to create a campaign
-      if (!apiKey) {
-        setShowKeyInput(true)
-        return
-      }
 
       setLoading(true)
       setCampaignResult(null)
@@ -196,10 +186,7 @@ export default function AgentChat() {
       try {
         const res = await fetch('/api/campaigns', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             name: `Campanha: ${msg.text.slice(0, 100)}`,
             search_filters: msg.filters,
@@ -244,20 +231,8 @@ export default function AgentChat() {
         setLoading(false)
       }
     },
-    [apiKey],
+    [],
   )
-
-  // ---------------------------------------------------------------------------
-  // API key submission
-  // ---------------------------------------------------------------------------
-
-  const submitApiKey = useCallback(() => {
-    const key = apiKeyInput.trim()
-    if (!key.startsWith('wk_')) return
-    setApiKey(key)
-    setApiKeyInput('')
-    setShowKeyInput(false)
-  }, [apiKeyInput])
 
   // ---------------------------------------------------------------------------
   // Campaign complete
@@ -294,6 +269,10 @@ export default function AgentChat() {
   // Render
   // ---------------------------------------------------------------------------
 
+  // Only render for authenticated users. Guard placed after all hooks so React
+  // always calls the same set of hooks regardless of auth state.
+  if (authLoading || !user) return null
+
   return (
     <>
       {/* Floating button */}
@@ -321,48 +300,8 @@ export default function AgentChat() {
                 <p className="text-xs text-emerald-200">Busca empresas no CNPJ</p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              {apiKey ? (
-                <span className="rounded-full bg-emerald-700 px-2 py-0.5 text-xs text-emerald-200">
-                  autenticado
-                </span>
-              ) : (
-                <button
-                  onClick={() => setShowKeyInput((v) => !v)}
-                  className="rounded-full bg-emerald-700 p-1.5 text-emerald-200 hover:bg-emerald-800"
-                  title="Configurar chave API"
-                >
-                  <KeyRound className="size-3.5" />
-                </button>
-              )}
-            </div>
+            <div />
           </div>
-
-          {/* API key input banner */}
-          {showKeyInput && (
-            <div className="border-b border-zinc-100 bg-zinc-50 px-4 py-3">
-              <p className="mb-2 text-xs text-zinc-600">
-                Informe sua chave <span className="font-mono">wk_...</span> para criar campanhas.
-              </p>
-              <div className="flex gap-2">
-                <input
-                  type="password"
-                  value={apiKeyInput}
-                  onChange={(e) => setApiKeyInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && submitApiKey()}
-                  placeholder="wk_..."
-                  className="flex-1 rounded-lg border border-zinc-200 px-2 py-1.5 text-xs outline-none focus:border-emerald-400"
-                />
-                <button
-                  onClick={submitApiKey}
-                  disabled={!apiKeyInput.startsWith('wk_')}
-                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-                >
-                  Salvar
-                </button>
-              </div>
-            </div>
-          )}
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto px-4 py-3" style={{ maxHeight: '400px', minHeight: '200px' }}>
@@ -492,7 +431,6 @@ export default function AgentChat() {
       {/* Campaign wizard modal */}
       {pendingCampaign && (
         <CampaignWizard
-          apiKey={apiKey}
           campaignId={pendingCampaign.campaignId}
           confirmationToken={pendingCampaign.confirmationToken}
           recipients={pendingCampaign.recipients}
@@ -501,7 +439,6 @@ export default function AgentChat() {
             // Cancel campaign before closing
             fetch(`/api/campaigns/${pendingCampaign.campaignId}/cancel`, {
               method: 'POST',
-              headers: { Authorization: `Bearer ${apiKey}` },
             }).catch(() => {})
             setPendingCampaign(null)
           }}

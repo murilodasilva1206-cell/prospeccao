@@ -20,7 +20,6 @@ export interface MessageData {
 
 interface MessageBubbleProps {
   message: MessageData
-  apiKey: string
   onReact?: (messageId: string) => void
 }
 
@@ -29,19 +28,17 @@ function formatTime(iso: string): string {
   return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
 }
 
-function MediaContent({ message, apiKey }: { message: MessageData; apiKey: string }) {
+function MediaContent({ message }: { message: MessageData }) {
   const [signedUrl, setSignedUrl] = useState<string | null>(message.media_url ?? null)
 
   useEffect(() => {
     if (signedUrl || !message.id) return
-    // Fetch signed URL if not pre-populated
-    fetch(`/api/whatsapp/media/${message.id}`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    })
+    // Fetch signed URL if not pre-populated (session cookie sent automatically)
+    fetch(`/api/whatsapp/media/${message.id}`)
       .then((r) => r.json())
       .then((d) => { if (d.url) setSignedUrl(d.url as string) })
       .catch(() => null)
-  }, [apiKey, message.id, signedUrl])
+  }, [message.id, signedUrl])
 
   if (message.message_type === 'image' || message.message_type === 'sticker') {
     if (!signedUrl) return <div className="w-48 h-32 bg-gray-200 animate-pulse rounded" />
@@ -94,7 +91,7 @@ function MediaContent({ message, apiKey }: { message: MessageData; apiKey: strin
   return null
 }
 
-export function MessageBubble({ message, apiKey, onReact }: MessageBubbleProps) {
+export function MessageBubble({ message, onReact }: MessageBubbleProps) {
   const isOutbound = message.direction === 'outbound'
 
   if (message.message_type === 'reaction') {
@@ -121,7 +118,7 @@ export function MessageBubble({ message, apiKey, onReact }: MessageBubbleProps) 
         {/* Media content */}
         {(['image', 'audio', 'video', 'document', 'sticker'] as const).includes(
           message.message_type as never,
-        ) && <MediaContent message={message} apiKey={apiKey} />}
+        ) && <MediaContent message={message} />}
 
         {/* Text body */}
         {message.body && (

@@ -10,7 +10,6 @@ interface MessageThreadProps {
   error: string | null
   hasMore: boolean
   onLoadMore: () => void
-  apiKey: string
   contactName?: string | null
   contactPhone?: string | null
 }
@@ -21,7 +20,6 @@ export function MessageThread({
   error,
   hasMore,
   onLoadMore,
-  apiKey,
   contactName,
   contactPhone,
 }: MessageThreadProps) {
@@ -108,7 +106,7 @@ export function MessageThread({
         )}
 
         {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} apiKey={apiKey} />
+          <MessageBubble key={msg.id} message={msg} />
         ))}
 
         <div ref={bottomRef} />

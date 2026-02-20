@@ -5,11 +5,10 @@ import type { MessageData } from '../components/MessageBubble'
 
 interface UseMessagesOptions {
   conversationId: string | null
-  apiKey: string
   pollInterval?: number
 }
 
-export function useMessages({ conversationId, apiKey, pollInterval = 5000 }: UseMessagesOptions) {
+export function useMessages({ conversationId, pollInterval = 5000 }: UseMessagesOptions) {
   const [messages, setMessages] = useState<MessageData[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -26,7 +25,6 @@ export function useMessages({ conversationId, apiKey, pollInterval = 5000 }: Use
 
         const res = await fetch(
           `/api/whatsapp/conversations/${conversationId}/messages?${params}`,
-          { headers: { Authorization: `Bearer ${apiKey}` } },
         )
         if (!res.ok) {
           const d = await res.json() as { error?: string }
@@ -53,7 +51,7 @@ export function useMessages({ conversationId, apiKey, pollInterval = 5000 }: Use
         setLoading(false)
       }
     },
-    [conversationId, apiKey],
+    [conversationId],
   )
 
   // Initial load + poll for new messages (poll by re-fetching latest page)
@@ -77,10 +75,7 @@ export function useMessages({ conversationId, apiKey, pollInterval = 5000 }: Use
       if (!conversationId) return
       const res = await fetch(`/api/whatsapp/conversations/${conversationId}/messages`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
       })
       if (!res.ok) {
@@ -90,7 +85,7 @@ export function useMessages({ conversationId, apiKey, pollInterval = 5000 }: Use
       // Re-fetch messages after send
       await fetchMessages()
     },
-    [conversationId, apiKey, fetchMessages],
+    [conversationId, fetchMessages],
   )
 
   return { messages, loading, error, hasMore, loadMore, sendTextMessage, refetch: fetchMessages }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Loader2, Plus, RefreshCcw, Trash2, Copy, Shield } from "lucide-react"
 import { toast, Toaster } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -34,7 +34,6 @@ function formatDate(value: string | null): string {
 }
 
 export default function WhatsAppKeysPage() {
-  const [workspaceKey, setWorkspaceKey] = useState("")
   const [keys, setKeys] = useState<KeyItem[]>([])
   const [loading, setLoading] = useState(false)
   const [creating, setCreating] = useState(false)
@@ -42,18 +41,10 @@ export default function WhatsAppKeysPage() {
   const [newCreatedBy, setNewCreatedBy] = useState("")
   const [revealedRawKey, setRevealedRawKey] = useState<string | null>(null)
 
-  const hasWorkspaceKey = useMemo(() => workspaceKey.trim().startsWith("wk_"), [workspaceKey])
-
   const loadKeys = useCallback(async () => {
-    if (!hasWorkspaceKey) {
-      toast.warning("Informe uma chave wk_ valida")
-      return
-    }
     setLoading(true)
     try {
-      const res = await fetch("/api/whatsapp/keys", {
-        headers: { Authorization: `Bearer ${workspaceKey.trim()}` },
-      })
+      const res = await fetch("/api/whatsapp/keys")
       const payload = (await res.json().catch(() => ({}))) as {
         data?: KeyItem[]
         error?: string
@@ -65,13 +56,14 @@ export default function WhatsAppKeysPage() {
     } finally {
       setLoading(false)
     }
-  }, [hasWorkspaceKey, workspaceKey])
+  }, [])
+
+  // Auto-load on mount
+  useEffect(() => {
+    void loadKeys()
+  }, [loadKeys])
 
   async function createKey() {
-    if (!hasWorkspaceKey) {
-      toast.warning("Informe uma chave wk_ valida")
-      return
-    }
     if (!newLabel.trim()) {
       toast.warning("Informe um label para a chave")
       return
@@ -80,10 +72,7 @@ export default function WhatsAppKeysPage() {
     try {
       const res = await fetch("/api/whatsapp/keys", {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${workspaceKey.trim()}`,
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           label: newLabel.trim(),
           created_by: newCreatedBy.trim() || undefined,
@@ -108,14 +97,9 @@ export default function WhatsAppKeysPage() {
   }
 
   async function revokeKey(id: string) {
-    if (!hasWorkspaceKey) {
-      toast.warning("Informe uma chave wk_ valida")
-      return
-    }
     try {
       const res = await fetch(`/api/whatsapp/keys?id=${encodeURIComponent(id)}`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${workspaceKey.trim()}` },
       })
       const payload = (await res.json().catch(() => ({}))) as { error?: string }
       if (!res.ok) throw new Error(payload.error ?? `HTTP ${res.status}`)
@@ -142,16 +126,10 @@ export default function WhatsAppKeysPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid gap-3 md:grid-cols-[1fr_auto]">
-              <Input
-                type="password"
-                value={workspaceKey}
-                onChange={(e) => setWorkspaceKey(e.target.value)}
-                placeholder="wk_..."
-              />
-              <Button onClick={() => void loadKeys()} disabled={loading}>
+            <div className="flex justify-end">
+              <Button variant="outline" size="sm" onClick={() => void loadKeys()} disabled={loading}>
                 {loading ? <Loader2 className="mr-2 size-4 animate-spin" /> : <RefreshCcw className="mr-2 size-4" />}
-                Carregar
+                Atualizar
               </Button>
             </div>
             <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
