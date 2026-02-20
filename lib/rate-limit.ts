@@ -262,3 +262,23 @@ export const campaignSendLimiter = createRateLimiter({
   interval: 60_000,
   maxRequests: 3, // 3 send requests / minute / IP
 })
+
+// ---------------------------------------------------------------------------
+// Auth limiter
+// ---------------------------------------------------------------------------
+
+/** /api/auth/login — very tight: prevents brute-force password attacks */
+export const loginLimiter = createRateLimiter({
+  name: 'login',
+  uniqueTokenPerInterval: 200,
+  interval: 60_000,
+  maxRequests: 5, // 5 attempts / minute / IP
+})
+
+/** /api/auth/register — one-shot bootstrap, but guard against automated abuse on fresh deploys */
+export const registerLimiter = createRateLimiter({
+  name: 'register',
+  uniqueTokenPerInterval: 100,
+  interval: 60_000,
+  maxRequests: 3, // 3 attempts / minute / IP
+})

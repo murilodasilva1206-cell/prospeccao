@@ -287,6 +287,18 @@ VALUES
 ON CONFLICT DO NOTHING;
 
 -- ============================================================
+-- Usuário dev para login web (email + senha)
+-- Senha: "devpassword" — NUNCA usar em producao
+-- Hash: scrypt gerado com lib/user-auth.ts (hashPassword)
+-- ============================================================
+INSERT INTO users (workspace_id, email, password_hash)
+VALUES (
+  'default',
+  'dev@prospeccao.local',
+  'fd62309acfae2e5a54cff1659f00897e:a46c3ed1409d1c876fce7ea70d27cc2a47ce24634be0d4060cf5711b46eaa2ef6b23c08361db2d923f15da5870cb4396b60ab84af0da2745d6ca494c30709643'
+) ON CONFLICT (email) DO NOTHING;
+
+-- ============================================================
 -- Distribuicao apos seed:
 -- workspace_id = 'default' para todos os 7 canais
 -- CONNECTED    : 3 (META Suporte, Evolution SDR, UAZAPI Atendimento)
