@@ -62,16 +62,18 @@ export async function findConversationsByWorkspace(
 
   if (options.status) {
     params.push(options.status)
-    statusClause = `AND status = $${params.length}`
+    statusClause = `AND c.status = $${params.length}`
   }
 
   const result = await client.query<Conversation>(
-    `SELECT id, channel_id, workspace_id, contact_phone, contact_name,
-            status, last_message_at, unread_count, ai_enabled,
-            created_at, updated_at
-     FROM conversations
-     WHERE workspace_id = $1 ${statusClause}
-     ORDER BY last_message_at DESC NULLS LAST
+    `SELECT c.id, c.channel_id, wc.name AS channel_name, wc.provider AS channel_provider,
+            c.workspace_id, c.contact_phone, c.contact_name,
+            c.status, c.last_message_at, c.unread_count, c.ai_enabled,
+            c.created_at, c.updated_at
+     FROM conversations c
+     INNER JOIN whatsapp_channels wc ON wc.id = c.channel_id
+     WHERE c.workspace_id = $1 ${statusClause}
+     ORDER BY c.last_message_at DESC NULLS LAST
      LIMIT $2 OFFSET $3`,
     params,
   )
@@ -84,11 +86,13 @@ export async function findConversationById(
   id: string,
 ): Promise<Conversation | null> {
   const result = await client.query<Conversation>(
-    `SELECT id, channel_id, workspace_id, contact_phone, contact_name,
-            status, last_message_at, unread_count, ai_enabled,
-            created_at, updated_at
-     FROM conversations
-     WHERE id = $1`,
+    `SELECT c.id, c.channel_id, wc.name AS channel_name, wc.provider AS channel_provider,
+            c.workspace_id, c.contact_phone, c.contact_name,
+            c.status, c.last_message_at, c.unread_count, c.ai_enabled,
+            c.created_at, c.updated_at
+     FROM conversations c
+     INNER JOIN whatsapp_channels wc ON wc.id = c.channel_id
+     WHERE c.id = $1`,
     [id],
   )
   return result.rows[0] ?? null
@@ -101,11 +105,17 @@ export async function updateConversationStatus(
   status: 'open' | 'resolved' | 'ai_handled',
 ): Promise<Conversation | null> {
   const result = await client.query<Conversation>(
-    `UPDATE conversations SET status = $1, updated_at = NOW()
-     WHERE id = $2
-     RETURNING id, channel_id, workspace_id, contact_phone, contact_name,
-               status, last_message_at, unread_count, ai_enabled,
-               created_at, updated_at`,
+    `WITH updated AS (
+      UPDATE conversations SET status = $1, updated_at = NOW()
+      WHERE id = $2
+      RETURNING *
+    )
+    SELECT u.id, u.channel_id, wc.name AS channel_name, wc.provider AS channel_provider,
+           u.workspace_id, u.contact_phone, u.contact_name,
+           u.status, u.last_message_at, u.unread_count, u.ai_enabled,
+           u.created_at, u.updated_at
+    FROM updated u
+    INNER JOIN whatsapp_channels wc ON wc.id = u.channel_id`,
     [status, id],
   )
   return result.rows[0] ?? null
@@ -118,11 +128,17 @@ export async function updateConversationAiEnabled(
   ai_enabled: boolean,
 ): Promise<Conversation | null> {
   const result = await client.query<Conversation>(
-    `UPDATE conversations SET ai_enabled = $1, updated_at = NOW()
-     WHERE id = $2
-     RETURNING id, channel_id, workspace_id, contact_phone, contact_name,
-               status, last_message_at, unread_count, ai_enabled,
-               created_at, updated_at`,
+    `WITH updated AS (
+      UPDATE conversations SET ai_enabled = $1, updated_at = NOW()
+      WHERE id = $2
+      RETURNING *
+    )
+    SELECT u.id, u.channel_id, wc.name AS channel_name, wc.provider AS channel_provider,
+           u.workspace_id, u.contact_phone, u.contact_name,
+           u.status, u.last_message_at, u.unread_count, u.ai_enabled,
+           u.created_at, u.updated_at
+    FROM updated u
+    INNER JOIN whatsapp_channels wc ON wc.id = u.channel_id`,
     [ai_enabled, id],
   )
   return result.rows[0] ?? null

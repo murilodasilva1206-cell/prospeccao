@@ -182,6 +182,18 @@ export const SendReactionSchema = z.object({
 export type SendReaction = z.infer<typeof SendReactionSchema>
 
 // ---------------------------------------------------------------------------
+// /api/whatsapp/channels/:id/send-template — Meta template messages
+// ---------------------------------------------------------------------------
+
+export const SendTemplateSchema = z.object({
+  to: z.string().regex(/^\d{8,15}$/, 'Numero deve conter apenas digitos (8-15)'),
+  name: SafeString(120),
+  language: z.string().regex(/^[a-z]{2}(?:_[A-Z]{2})$/, 'Idioma invalido (ex: pt_BR)'),
+  body_params: z.array(SafeString(250)).max(10).optional().default([]),
+})
+export type SendTemplate = z.infer<typeof SendTemplateSchema>
+
+// ---------------------------------------------------------------------------
 // /api/whatsapp/conversations — conversation management
 // ---------------------------------------------------------------------------
 
@@ -212,3 +224,93 @@ export const InboxAiResponseSchema = z.object({
   reason: z.string().max(500).optional(),
 })
 export type InboxAiResponse = z.infer<typeof InboxAiResponseSchema>
+
+// ---------------------------------------------------------------------------
+// /api/campaigns — blast campaign state machine
+// ---------------------------------------------------------------------------
+
+export const CAMPAIGN_STATUSES = [
+  'draft',
+  'awaiting_confirmation',
+  'awaiting_channel',
+  'awaiting_message',
+  'ready_to_send',
+  'sending',
+  'completed',
+  'completed_with_errors',
+  'cancelled',
+] as const
+export type CampaignStatus = (typeof CAMPAIGN_STATUSES)[number]
+
+/** Single lead in a campaign recipient list */
+export const CampaignRecipientInputSchema = z.object({
+  cnpj: SafeString(20),
+  razao_social: SafeString(200),
+  nome_fantasia: SafeString(200).optional(),
+  telefone: SafeString(20).optional(),
+  email: SafeString(200).optional(),
+  municipio: SafeString(150).optional(),
+  uf: z.string().length(2).toUpperCase().optional(),
+})
+export type CampaignRecipientInput = z.infer<typeof CampaignRecipientInputSchema>
+
+/** POST /api/campaigns — create a draft campaign from agent search results */
+export const CreateCampaignSchema = z.object({
+  name: SafeString(200).optional(),
+  search_filters: z.record(z.string(), z.unknown()).optional(),
+  recipients: z.array(CampaignRecipientInputSchema).min(1).max(500),
+})
+export type CreateCampaign = z.infer<typeof CreateCampaignSchema>
+
+/** POST /api/campaigns/:id/confirm — user echoes confirmation_token */
+export const ConfirmCampaignSchema = z.object({
+  confirmation_token: z.string().min(32).max(128),
+})
+export type ConfirmCampaign = z.infer<typeof ConfirmCampaignSchema>
+
+/** POST /api/campaigns/:id/select-channel */
+export const SelectChannelSchema = z.object({
+  channel_id: z.string().uuid('channel_id deve ser um UUID valido'),
+})
+export type SelectChannel = z.infer<typeof SelectChannelSchema>
+
+/** Message content shape for template messages (Meta only) */
+const TemplateMessageContentSchema = z.object({
+  type: z.literal('template'),
+  name: SafeString(120),
+  language: z.string().regex(/^[a-z]{2}(?:_[A-Z]{2})$/, 'Idioma invalido (ex: pt_BR)'),
+  body_params: z.array(SafeString(250)).max(10).optional().default([]),
+})
+
+/** Message content shape for plain text messages (non-Meta) */
+const TextMessageContentSchema = z.object({
+  type: z.literal('text'),
+  body: SafeString(4096),
+})
+
+/** POST /api/campaigns/:id/set-message */
+export const SetCampaignMessageSchema = z
+  .object({
+    message_type: z.enum(['template', 'text']),
+    message_content: z.discriminatedUnion('type', [
+      TemplateMessageContentSchema,
+      TextMessageContentSchema,
+    ]),
+  })
+  .superRefine((val, ctx) => {
+    if (val.message_type !== val.message_content.type) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `message_type '${val.message_type}' deve corresponder a message_content.type '${val.message_content.type}'`,
+        path: ['message_type'],
+      })
+    }
+  })
+export type SetCampaignMessage = z.infer<typeof SetCampaignMessageSchema>
+
+/** GET /api/campaigns/:id/recipients pagination */
+export const RecipientPaginationSchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+  status: z.enum(['pending', 'processing', 'sent', 'failed', 'skipped']).optional(),
+})

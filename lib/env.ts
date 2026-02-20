@@ -16,6 +16,10 @@ const EnvSchema = z.object({
   NODE_ENV: z
     .enum(['development', 'production', 'test'])
     .default('development'),
+  // How long (in minutes) a 'processing' lease is held before it can be
+  // re-claimed by another worker after a crash or timeout.
+  CAMPAIGN_LEASE_TIMEOUT_MINUTES: z.coerce.number().int().min(1).max(120).default(10),
+
   // AES-256-GCM key for encrypting WhatsApp channel credentials at rest.
   // Must be exactly 64 hex characters (= 32 bytes = 256 bits).
   CREDENTIALS_ENCRYPTION_KEY: z

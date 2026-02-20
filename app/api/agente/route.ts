@@ -9,7 +9,7 @@ import { detectInjectionAttempt } from '@/lib/agent-prompts'
 import { callAiAgent } from '@/lib/ai-client'
 import { buildContactsQuery, buildCountQuery } from '@/lib/query-builder'
 import { maskContact } from '@/lib/mask-output'
-import { resolveNichoCnae } from '@/lib/nicho-cnae'
+import { resolveNichoCnae, resolveNichoCnaeDynamic } from '@/lib/nicho-cnae'
 import type { BuscaQuery } from '@/lib/schemas'
 
 export async function POST(request: NextRequest) {
@@ -87,9 +87,12 @@ export async function POST(request: NextRequest) {
   }
 
   // 5. Resolve nicho → cnae_principal before building query
+  // Dynamic lookup (cnae_dictionary table) first; fall back to static map.
   const rawFilters = intent.filters ?? {}
   if (rawFilters.nicho && !rawFilters.cnae_principal) {
-    const resolved = resolveNichoCnae(rawFilters.nicho)
+    const resolved =
+      (await resolveNichoCnaeDynamic(rawFilters.nicho)) ??
+      resolveNichoCnae(rawFilters.nicho)
     if (resolved) {
       rawFilters.cnae_principal = resolved
       log.debug({ nicho: rawFilters.nicho, cnae: resolved }, 'Nicho resolved to CNAE')

@@ -86,6 +86,8 @@ export interface Message {
 export interface Conversation {
   id: string
   channel_id: string
+  channel_name?: string
+  channel_provider?: Provider
   workspace_id: string
   contact_phone: string
   contact_name: string | null

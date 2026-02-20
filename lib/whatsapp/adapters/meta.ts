@@ -203,6 +203,51 @@ export class MetaAdapter implements IWhatsAppAdapter {
     return { message_id: data.messages?.[0]?.id ?? targetMessageId + '-reaction' }
   }
 
+  async sendTemplate(
+    _channel: Channel,
+    creds: ChannelCredentials,
+    to: string,
+    templateName: string,
+    language: string,
+    bodyParams: string[] = [],
+  ): Promise<SendResult> {
+    if (!creds.access_token || !creds.phone_number_id)
+      throw new Error('Meta adapter requer access_token e phone_number_id')
+
+    const components =
+      bodyParams.length > 0
+        ? [
+            {
+              type: 'body',
+              parameters: bodyParams.map((text) => ({ type: 'text', text })),
+            },
+          ]
+        : undefined
+
+    const res = await fetch(`${GRAPH_BASE}/${creds.phone_number_id}/messages`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${creds.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to,
+        type: 'template',
+        template: {
+          name: templateName,
+          language: { code: language },
+          ...(components ? { components } : {}),
+        },
+      }),
+    })
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      throw new Error(`Meta sendTemplate falhou (${res.status}): ${body}`)
+    }
+
+    const data = (await res.json()) as { messages?: Array<{ id?: string }> }
+    return { message_id: data.messages?.[0]?.id ?? stableId('meta', 'template', to, templateName) }
+  }
+
   async downloadMedia(
     _channel: Channel,
     creds: ChannelCredentials,

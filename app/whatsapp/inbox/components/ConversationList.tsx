@@ -22,21 +22,10 @@ function formatLastMessage(iso: string | null): string {
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
 }
 
-function statusLabel(status: string): string {
-  const map: Record<string, string> = {
-    open: 'Aberta',
-    resolved: 'Resolvida',
-    ai_handled: 'Atendida pela IA',
-  }
-  return map[status] ?? status
-}
-
 export function ConversationList({ conversations, selectedId, onSelect, loading }: ConversationListProps) {
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState<string>('open')
 
   const filtered = conversations
-    .filter((c) => (statusFilter === 'all' ? true : c.status === statusFilter))
     .filter((c) =>
       search.trim()
         ? (c.contact_name ?? c.contact_phone).toLowerCase().includes(search.toLowerCase())
@@ -55,21 +44,7 @@ export function ConversationList({ conversations, selectedId, onSelect, loading 
           onChange={(e) => setSearch(e.target.value)}
           className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400"
         />
-        <div className="flex gap-1 mt-2">
-          {['open', 'resolved', 'ai_handled', 'all'].map((s) => (
-            <button
-              key={s}
-              onClick={() => setStatusFilter(s)}
-              className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${
-                statusFilter === s
-                  ? 'bg-green-500 text-white border-green-500'
-                  : 'bg-white text-gray-600 border-gray-200 hover:border-green-300'
-              }`}
-            >
-              {s === 'all' ? 'Todas' : statusLabel(s)}
-            </button>
-          ))}
-        </div>
+        <p className="mt-2 text-xs text-gray-500">Total de conversas: {filtered.length}</p>
       </div>
 
       {/* List */}

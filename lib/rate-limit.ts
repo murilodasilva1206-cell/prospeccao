@@ -242,3 +242,23 @@ export const whatsappKeysLimiter = createRateLimiter({
   interval: 60_000,
   maxRequests: 5, // 5 key operations / minute / IP
 })
+
+// ---------------------------------------------------------------------------
+// Campaign limiters
+// ---------------------------------------------------------------------------
+
+/** /api/campaigns — campaign creation and management */
+export const campaignLimiter = createRateLimiter({
+  name: 'campaigns',
+  uniqueTokenPerInterval: 500,
+  interval: 60_000,
+  maxRequests: 20, // 20 campaign ops / minute / IP
+})
+
+/** /api/campaigns/:id/send — tight: batch WhatsApp sends are expensive */
+export const campaignSendLimiter = createRateLimiter({
+  name: 'campaigns-send',
+  uniqueTokenPerInterval: 200,
+  interval: 60_000,
+  maxRequests: 3, // 3 send requests / minute / IP
+})

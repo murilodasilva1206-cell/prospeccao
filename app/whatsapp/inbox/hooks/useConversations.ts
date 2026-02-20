@@ -5,6 +5,8 @@ import { useState, useEffect, useCallback } from 'react'
 export interface ConversationItem {
   id: string
   channel_id: string
+  channel_name?: string
+  channel_provider?: 'META_CLOUD' | 'EVOLUTION' | 'UAZAPI'
   workspace_id: string
   contact_phone: string
   contact_name: string | null

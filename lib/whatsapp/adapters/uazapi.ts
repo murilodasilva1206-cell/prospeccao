@@ -248,6 +248,17 @@ export class UazapiAdapter implements IWhatsAppAdapter {
     return { message_id: data.id ?? data.messageId ?? targetMessageId + '-reaction' }
   }
 
+  async sendTemplate(
+    _channel: Channel,
+    _creds: ChannelCredentials,
+    _to: string,
+    _templateName: string,
+    _language: string,
+    _bodyParams: string[] = [],
+  ): Promise<SendResult> {
+    throw new Error('Templates oficiais sao suportados apenas no canal META_CLOUD')
+  }
+
   async downloadMedia(
     channel: Channel,
     creds: ChannelCredentials,

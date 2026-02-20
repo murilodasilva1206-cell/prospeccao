@@ -1,6 +1,12 @@
 'use client'
 
 import { useState } from 'react'
+import {
+  Bot,
+  ChevronRight,
+  Phone,
+  UserRound,
+} from 'lucide-react'
 import { ConversationList } from './components/ConversationList'
 import { MessageThread } from './components/MessageThread'
 import { MessageComposer } from './components/MessageComposer'
@@ -8,78 +14,114 @@ import { useConversations } from './hooks/useConversations'
 import { useMessages } from './hooks/useMessages'
 import type { ConversationItem } from './hooks/useConversations'
 
-interface ContextPanelProps {
-  conversation: ConversationItem | null
-  onPatch: (id: string, patch: { status?: string; ai_enabled?: boolean }) => Promise<void>
-}
-
-function ContextPanel({ conversation, onPatch }: ContextPanelProps) {
+function ContactCockpit({ conversation }: { conversation: ConversationItem | null }) {
   if (!conversation) {
     return (
-      <div className="flex-1 flex items-center justify-center text-gray-400 text-sm p-4">
-        Sem conversa selecionada
+      <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
+        Selecione uma conversa para ver os detalhes do lead.
       </div>
     )
   }
 
-  function statusLabel(status: 'open' | 'resolved' | 'ai_handled'): string {
-    switch (status) {
-      case 'open':
-        return 'Aberta'
-      case 'resolved':
-        return 'Resolvida'
-      case 'ai_handled':
-        return 'Atendida pela IA'
-      default:
-        return status
-    }
+  const displayName = conversation.contact_name ?? conversation.contact_phone
+  const initial = displayName.charAt(0).toUpperCase()
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="flex size-14 items-center justify-center rounded-full bg-emerald-100 text-lg font-semibold text-emerald-800">
+            {initial}
+          </div>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-slate-900">{displayName}</p>
+            <p className="truncate text-xs text-slate-500">{conversation.contact_phone}</p>
+            <p className="truncate text-xs text-slate-500">
+              Canal: {conversation.channel_name ?? conversation.channel_id.slice(0, 8)}
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <h3 className="mb-3 text-sm font-semibold text-slate-800">Detalhes do contato</h3>
+        <div className="space-y-2 text-xs text-slate-600">
+          <p className="flex items-center gap-2"><Phone className="size-3.5" /> {conversation.contact_phone}</p>
+          <p>E-mail: N/D</p>
+          <p>Endereco: N/D</p>
+          <p>Nome do canal: {conversation.channel_name ?? '-'}</p>
+          <p>Provedor: {conversation.channel_provider ?? '-'}</p>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <h3 className="mb-3 text-sm font-semibold text-slate-800">Contexto de prospeccao</h3>
+        <div className="space-y-2 text-xs text-slate-700">
+          <p>Mensagens nao lidas: {conversation.unread_count}</p>
+          <p>Status da conversa: {conversation.status}</p>
+          <p>IA no contato: {conversation.ai_enabled ? 'Ativada' : 'Desativada'}</p>
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function InsightsPanel({
+  conversation,
+  onPatch,
+}: {
+  conversation: ConversationItem | null
+  onPatch: (id: string, patch: { status?: string; ai_enabled?: boolean }) => Promise<void>
+}) {
+  if (!conversation) {
+    return (
+      <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
+        Sem conversa selecionada.
+      </div>
+    )
   }
 
   return (
-    <div className="p-4 space-y-4">
-      <div>
-        <h3 className="text-sm font-semibold text-gray-900 mb-1">Contato</h3>
-        <p className="text-sm text-gray-700">{conversation.contact_name ?? '-'}</p>
-        <p className="text-xs text-gray-500">{conversation.contact_phone}</p>
-      </div>
-
-      <div>
-        <h3 className="text-sm font-semibold text-gray-900 mb-1">Status</h3>
-        <div className="flex flex-col gap-1">
-          {(['open', 'resolved', 'ai_handled'] as const).map((s) => (
-            <button
-              key={s}
-              onClick={() => onPatch(conversation.id, { status: s })}
-              className={`px-2 py-1 text-xs rounded border text-left transition-colors ${
-                conversation.status === s
-                  ? 'bg-green-500 text-white border-green-500'
-                  : 'bg-white text-gray-600 border-gray-200 hover:border-green-300'
-              }`}
-            >
-              {statusLabel(s)}
-            </button>
-          ))}
+    <div className="space-y-4">
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-slate-800">Assistente IA</h3>
+          <Bot className="size-4 text-violet-600" />
         </div>
-      </div>
-
-      <div>
-        <h3 className="text-sm font-semibold text-gray-900 mb-1">Assistente IA</h3>
         <button
           onClick={() => onPatch(conversation.id, { ai_enabled: !conversation.ai_enabled })}
-          className={`w-full px-3 py-1.5 text-xs rounded border transition-colors ${
+          className={`w-full rounded-md border px-3 py-2 text-xs font-medium transition-colors ${
             conversation.ai_enabled
-              ? 'bg-purple-500 text-white border-purple-500'
-              : 'bg-white text-gray-600 border-gray-200 hover:border-purple-300'
+              ? 'border-violet-500 bg-violet-500 text-white'
+              : 'border-slate-300 bg-white text-slate-700 hover:border-violet-300'
           }`}
         >
           {conversation.ai_enabled ? 'IA ativada' : 'Ativar IA'}
         </button>
-      </div>
+      </section>
 
-      <div>
-        <h3 className="text-sm font-semibold text-gray-900 mb-1">Mensagens nao lidas</h3>
-        <span className="text-2xl font-bold text-gray-700">{conversation.unread_count}</span>
-      </div>
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <h3 className="mb-3 text-sm font-semibold text-slate-800">Proxima melhor acao</h3>
+        <div className="space-y-2 text-xs text-slate-700">
+          <button className="flex w-full items-center justify-between rounded-md border border-slate-200 px-3 py-2 hover:bg-slate-50">
+            Enviar template de follow-up <ChevronRight className="size-3.5" />
+          </button>
+          <button className="flex w-full items-center justify-between rounded-md border border-slate-200 px-3 py-2 hover:bg-slate-50">
+            Solicitar audio de qualificacao <ChevronRight className="size-3.5" />
+          </button>
+          <button className="flex w-full items-center justify-between rounded-md border border-slate-200 px-3 py-2 hover:bg-slate-50">
+            Converter em oportunidade <ChevronRight className="size-3.5" />
+          </button>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <h3 className="mb-2 text-sm font-semibold text-slate-800">Resumo rapido</h3>
+        <p className="text-xs text-slate-600">
+          Conversa em andamento para prospeccao outbound. Use mensagens curtas, CTA claro
+          e registro de proximo passo.
+        </p>
+      </section>
     </div>
   )
 }
@@ -88,117 +130,124 @@ export default function InboxPage() {
   const [apiKey, setApiKey] = useState<string>('')
   const [keyInput, setKeyInput] = useState<string>('')
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
-  const [statusFilter] = useState<string>('open')
-
   const { conversations, loading: convLoading, patchConversation } = useConversations({
     apiKey,
-    status: statusFilter,
   })
 
   const selectedConversation = conversations.find((c) => c.id === selectedConversationId) ?? null
 
-  const {
-    messages,
-    loading: msgLoading,
-    error: msgError,
-    hasMore,
-    loadMore,
-    refetch,
-  } = useMessages({
+  const { messages, loading: msgLoading, error: msgError, hasMore, loadMore, refetch } = useMessages({
     conversationId: selectedConversationId,
     apiKey,
   })
 
   if (!apiKey) {
     return (
-      <div className="flex items-center justify-center h-screen bg-gray-50">
-        <div className="p-8 bg-white rounded-xl shadow border border-gray-100 w-full max-w-sm">
-          <h2 className="text-lg font-semibold text-gray-900 mb-1">Chave de API do Workspace</h2>
-          <p className="text-sm text-gray-500 mb-4">
-            Insira a chave <code className="bg-gray-100 px-1 rounded">wk_...</code> gerada com{' '}
-            <code className="bg-gray-100 px-1 rounded">bootstrap-api-key.mjs</code>.
-            A chave e mantida apenas em memoria.
+      <div className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
+        <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-lg font-semibold text-slate-900">Acesso ao Inbox OmniChannel</h2>
+          <p className="mt-2 text-sm text-slate-600">
+            Informe sua chave <code className="rounded bg-slate-100 px-1">wk_...</code> para abrir o atendimento.
           </p>
           <input
             type="password"
             value={keyInput}
             onChange={(e) => setKeyInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && keyInput.trim().startsWith('wk_')) {
-                setApiKey(keyInput.trim())
-              }
+              if (e.key === 'Enter' && keyInput.trim().startsWith('wk_')) setApiKey(keyInput.trim())
             }}
             placeholder="wk_..."
-            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400 mb-3"
+            className="mt-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
           />
           <button
             onClick={() => {
               if (keyInput.trim().startsWith('wk_')) setApiKey(keyInput.trim())
             }}
             disabled={!keyInput.trim().startsWith('wk_')}
-            className="w-full py-2 text-sm font-medium bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="mt-3 w-full rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Entrar
+            Entrar no Inbox
           </button>
-          <p className="mt-3 text-xs text-gray-400 text-center">
-            <a href="/whatsapp" className="underline hover:text-gray-600">
-              Voltar ao modulo WhatsApp
-            </a>
-          </p>
+          <a href="/whatsapp" className="mt-3 block text-center text-xs text-slate-500 underline hover:text-slate-700">
+            Voltar ao modulo WhatsApp
+          </a>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="flex h-screen bg-gray-100 overflow-hidden">
-      <div className="w-72 shrink-0 flex flex-col bg-white border-r border-gray-200">
-        <div className="px-4 py-3 border-b border-gray-100 bg-green-600">
-          <h1 className="text-base font-semibold text-white">Inbox OmniCanal</h1>
-          <div className="mt-1 flex gap-3 text-xs text-green-200">
-            <a href="/whatsapp" className="hover:text-white">Modulo</a>
-            <a href="/whatsapp/canais" className="hover:text-white">Canais</a>
-            <a href="/whatsapp/chaves" className="hover:text-white">Chaves</a>
-          </div>
+    <main className="min-h-screen bg-slate-100 p-4 md:p-6">
+      <div className="mb-3 flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+        <div>
+          <p className="text-base font-semibold text-slate-900">Inbox OmniChannel</p>
+          <p className="text-xs text-slate-500">Layout operacional de prospeccao multicanal</p>
         </div>
-        <div className="flex-1 overflow-hidden">
+        <div className="hidden items-center gap-2 text-xs text-slate-600 md:flex">
+          <a href="/whatsapp" className="rounded border border-slate-200 px-2 py-1 hover:bg-slate-50">Modulo</a>
+          <a href="/whatsapp/canais" className="rounded border border-slate-200 px-2 py-1 hover:bg-slate-50">Canais</a>
+          <a href="/whatsapp/chaves" className="rounded border border-slate-200 px-2 py-1 hover:bg-slate-50">Chaves</a>
+        </div>
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-[300px_320px_1fr_300px]">
+        <aside className="hidden xl:block">
+          <ContactCockpit conversation={selectedConversation} />
+        </aside>
+
+        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <ConversationList
             conversations={conversations}
             selectedId={selectedConversationId}
             onSelect={setSelectedConversationId}
             loading={convLoading}
           />
-        </div>
-      </div>
+        </section>
 
-      <div className="flex-1 flex flex-col min-w-0">
-        <div className="flex-1 overflow-hidden">
-          <MessageThread
-            messages={messages}
-            loading={msgLoading}
-            error={msgError}
-            hasMore={hasMore}
-            onLoadMore={loadMore}
+        <section className="flex min-h-[70vh] min-w-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <div className="flex size-9 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+                <UserRound className="size-4" />
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-slate-900">
+                  {selectedConversation?.contact_name ?? 'Selecione um contato'}
+                </p>
+                <p className="truncate text-xs text-slate-500">
+                  {selectedConversation?.contact_phone ?? 'Sem telefone selecionado'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-hidden">
+            <MessageThread
+              messages={messages}
+              loading={msgLoading}
+              error={msgError}
+              hasMore={hasMore}
+              onLoadMore={loadMore}
+              apiKey={apiKey}
+              contactName={selectedConversation?.contact_name}
+              contactPhone={selectedConversation?.contact_phone}
+            />
+          </div>
+
+          <MessageComposer
+            conversationId={selectedConversationId}
+            channelId={selectedConversation?.channel_id ?? null}
+            channelProvider={selectedConversation?.channel_provider}
+            contactPhone={selectedConversation?.contact_phone ?? null}
             apiKey={apiKey}
-            contactName={selectedConversation?.contact_name}
-            contactPhone={selectedConversation?.contact_phone}
+            onMessageSent={refetch}
           />
-        </div>
-        <MessageComposer
-          conversationId={selectedConversationId}
-          channelId={selectedConversation?.channel_id ?? null}
-          contactPhone={selectedConversation?.contact_phone ?? null}
-          apiKey={apiKey}
-          onMessageSent={refetch}
-        />
-      </div>
+        </section>
 
-      <div className="w-64 shrink-0 bg-white border-l border-gray-200 overflow-y-auto">
-        <div className="px-4 py-3 border-b border-gray-100">
-          <h2 className="text-sm font-semibold text-gray-700">Detalhes</h2>
-        </div>
-        <ContextPanel conversation={selectedConversation} onPatch={patchConversation} />
+        <aside className="hidden xl:block">
+          <InsightsPanel conversation={selectedConversation} onPatch={patchConversation} />
+        </aside>
       </div>
-    </div>
+    </main>
   )
 }

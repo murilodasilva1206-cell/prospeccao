@@ -85,6 +85,16 @@ export interface IWhatsAppAdapter {
     targetMessageId: string,
   ): Promise<SendResult>
 
+  /** Sends a template message (Meta Cloud only). */
+  sendTemplate(
+    channel: Channel,
+    creds: ChannelCredentials,
+    to: string,
+    templateName: string,
+    language: string,
+    bodyParams?: string[],
+  ): Promise<SendResult>
+
   /**
    * Downloads media referenced in an inbound event.
    * Use the media_id from the normalized inbound event payload.
