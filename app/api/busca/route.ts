@@ -8,6 +8,7 @@ import { BuscaQuerySchema } from '@/lib/schemas'
 import { buildContactsQuery, buildCountQuery } from '@/lib/query-builder'
 import { maskContact } from '@/lib/mask-output'
 import { resolveNichoCnae } from '@/lib/nicho-cnae'
+import { requireWorkspaceAuth, authErrorResponse } from '@/lib/whatsapp/auth-middleware'
 
 export async function GET(request: NextRequest) {
   const requestId = crypto.randomUUID()
@@ -58,14 +59,27 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // 4. Execute parameterized queries
+  // 4. Auth + execute parameterized queries (single DB connection)
   try {
     const client = await pool.connect()
     try {
+      // Authentication — session cookie (web UI) or Bearer wk_... token (API)
+      // Note: workspace_id is captured for audit logging only.
+      // `estabelecimentos` is a public CNPJ registry shared across all workspaces —
+      // filtering by workspace_id would be incorrect here.
+      let auth
+      try {
+        auth = await requireWorkspaceAuth(request, client)
+      } catch (err) {
+        const res = authErrorResponse(err)
+        if (res) return res
+        throw err
+      }
+
       const { text, values } = buildContactsQuery(filters)
       const { text: countText, values: countValues } = buildCountQuery(filters)
 
-      log.debug({ filters }, 'Executando busca')
+      log.debug({ filters, workspace_id: auth.workspace_id, actor: auth.actor }, 'Executando busca')
 
       const [rows, countResult] = await Promise.all([
         client.query(text, values),
@@ -75,7 +89,7 @@ export async function GET(request: NextRequest) {
       const data = rows.rows.map(maskContact)
       const total = Number(countResult.rows[0]?.total ?? 0)
 
-      log.info({ resultCount: data.length, total }, 'Busca concluida')
+      log.info({ resultCount: data.length, total, workspace_id: auth.workspace_id, actor: auth.actor }, 'Busca concluida')
 
       return NextResponse.json({
         data,

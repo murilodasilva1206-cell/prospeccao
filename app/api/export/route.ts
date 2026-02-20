@@ -8,6 +8,7 @@ import { ExportQuerySchema } from '@/lib/schemas'
 import { buildContactsQuery } from '@/lib/query-builder'
 import { maskContact, type PublicEmpresa } from '@/lib/mask-output'
 import { resolveNichoCnae } from '@/lib/nicho-cnae'
+import { requireWorkspaceAuth, authErrorResponse } from '@/lib/whatsapp/auth-middleware'
 import type { BuscaQuery } from '@/lib/schemas'
 
 // ---------------------------------------------------------------------------
@@ -112,6 +113,19 @@ export async function GET(request: NextRequest) {
   try {
     const client = await pool.connect()
     try {
+      // Authentication — session cookie (web UI) or Bearer wk_... token (API)
+      // Note: workspace_id is captured for audit logging only.
+      // `estabelecimentos` is a public CNPJ registry shared across all workspaces —
+      // filtering by workspace_id would be incorrect here.
+      let auth
+      try {
+        auth = await requireWorkspaceAuth(request, client)
+      } catch (err) {
+        const res = authErrorResponse(err)
+        if (res) return res
+        throw err
+      }
+
       const { text, values } = buildContactsQuery(searchFilters)
       const result = await client.query(text, values)
       const rows = result.rows.map(maskContact)
@@ -119,7 +133,7 @@ export async function GET(request: NextRequest) {
       const header = '"cnpj","razaoSocial","nomeFantasia","uf","municipio","cnaePrincipal","situacao","telefone1","telefone2","email"'
       const csv = [header, ...rows.map(empresaToCsvLine)].join('\r\n')
 
-      log.info({ exportedRows: rows.length }, 'Exportacao CSV concluida')
+      log.info({ exportedRows: rows.length, workspace_id: auth.workspace_id, actor: auth.actor }, 'Exportacao CSV concluida')
 
       return new NextResponse(csv, {
         headers: {

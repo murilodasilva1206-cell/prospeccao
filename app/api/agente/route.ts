@@ -10,6 +10,7 @@ import { callAiAgent } from '@/lib/ai-client'
 import { buildContactsQuery, buildCountQuery } from '@/lib/query-builder'
 import { maskContact } from '@/lib/mask-output'
 import { resolveNichoCnae, resolveNichoCnaeDynamic } from '@/lib/nicho-cnae'
+import { requireWorkspaceAuth, authErrorResponse } from '@/lib/whatsapp/auth-middleware'
 import type { BuscaQuery } from '@/lib/schemas'
 
 export async function POST(request: NextRequest) {
@@ -35,7 +36,26 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  // 2. Parse and validate request body
+  // 2. Authentication — session cookie (web UI) or Bearer wk_... token (API)
+  // Note: workspace_id is captured for audit logging only.
+  // `estabelecimentos` is a public CNPJ registry shared across all workspaces —
+  // filtering by workspace_id would be incorrect here.
+  let authCtx: { workspace_id: string; actor: string }
+  {
+    const authClient = await pool.connect()
+    try {
+      authCtx = await requireWorkspaceAuth(request, authClient)
+    } catch (err) {
+      const res = authErrorResponse(err)
+      if (res) return res
+      log.error({ err }, 'Unexpected error during auth on /api/agente')
+      return NextResponse.json({ error: 'Erro interno' }, { status: 500 })
+    } finally {
+      authClient.release()
+    }
+  }
+
+  // 3. Parse and validate request body
   let body
   try {
     const raw = await request.json()
@@ -52,7 +72,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'JSON invalido no corpo da requisicao' }, { status: 400 })
   }
 
-  // 3. Pre-screen for prompt injection BEFORE calling the AI (fast, no API cost)
+  // 4. Pre-screen for prompt injection BEFORE calling the AI (fast, no API cost)
   if (detectInjectionAttempt(body.message)) {
     log.warn(
       { messagePreview: body.message.slice(0, 100) },
@@ -65,7 +85,7 @@ export async function POST(request: NextRequest) {
     })
   }
 
-  // 4. Call AI with circuit breaker, guardrails, and structured output validation
+  // 5. Call AI with circuit breaker, guardrails, and structured output validation
   let intent, latencyMs, parseSuccess
   try {
     ;({ intent, latencyMs, parseSuccess } = await callAiAgent(body.message))
@@ -86,7 +106,7 @@ export async function POST(request: NextRequest) {
     })
   }
 
-  // 5. Resolve nicho → cnae_principal before building query
+  // 6. Resolve nicho → cnae_principal before building query
   // Dynamic lookup (cnae_dictionary table) first; fall back to static map.
   const rawFilters = intent.filters ?? {}
   if (rawFilters.nicho && !rawFilters.cnae_principal) {
@@ -133,14 +153,14 @@ export async function POST(request: NextRequest) {
     })
   }
 
-  // 6. Execute DB search and return real data
+  // 7. Execute DB search and return real data
   try {
     const client = await pool.connect()
     try {
       const { text, values } = buildContactsQuery(filters)
       const { text: countText, values: countValues } = buildCountQuery(filters)
 
-      log.debug({ filters }, 'Agent executing search query')
+      log.debug({ filters, workspace_id: authCtx.workspace_id, actor: authCtx.actor }, 'Agent executing search query')
 
       const [rows, countResult] = await Promise.all([
         client.query(text, values),
@@ -150,7 +170,7 @@ export async function POST(request: NextRequest) {
       const data = rows.rows.map(maskContact)
       const total = Number(countResult.rows[0]?.total ?? 0)
 
-      log.info({ resultCount: data.length, total, latencyMs }, 'Agent search success')
+      log.info({ resultCount: data.length, total, latencyMs, workspace_id: authCtx.workspace_id, actor: authCtx.actor }, 'Agent search success')
 
       return NextResponse.json({
         action: 'search',

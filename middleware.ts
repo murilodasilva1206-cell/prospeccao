@@ -1,7 +1,56 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
+const SESSION_COOKIE = 'session'
+const SESSION_EXP_COOKIE = 'session_exp'
+
 export function middleware(_request: NextRequest) {
+  const pathname = _request.nextUrl.pathname
+
+  // ---------------------------------------------------------------------------
+  // Route protection: redirect unauthenticated/expired users to /login.
+  // Applies only to page routes under /whatsapp (not /api/*, not /login itself).
+  //
+  // Two-tier design — intentional, no DB access at the Edge:
+  //
+  //   Tier 1 (Edge middleware — this file):
+  //     Checks cookie presence + session_exp companion cookie (unix timestamp).
+  //     Fast: no DB round-trip, runs on every navigation.
+  //     Limitation: cannot detect sessions revoked server-side (e.g. logout on
+  //     another device) because the HttpOnly cookie may still be present.
+  //     An attacker who forges `session_exp` can bypass this redirect, but they
+  //     still cannot forge `session` — all API calls will 401.
+  //
+  //   Tier 2 (WhatsApp layout client component — app/whatsapp/layout.tsx):
+  //     Calls /api/auth/me on mount; redirects to /login if 401 is returned.
+  //     Catches revoked/invalid sessions that slipped past Tier 1.
+  //     Also used by AuthProvider.refreshSession() after login to avoid the
+  //     race where user=null causes a bounce-back to /login.
+  //
+  //   Security boundary: all protected API routes call requireWorkspaceAuth()
+  //   which validates the session token against the DB — that is the true gate.
+  //   The middleware and layout redirects are UX guards, not security controls.
+  // ---------------------------------------------------------------------------
+  if (pathname.startsWith('/whatsapp')) {
+    const hasSession = _request.cookies.has(SESSION_COOKIE)
+    if (!hasSession) {
+      const loginUrl = new URL('/login', _request.url)
+      loginUrl.searchParams.set('from', pathname)
+      return NextResponse.redirect(loginUrl)
+    }
+
+    // Check whether the session has expired via the companion cookie.
+    const expRaw = _request.cookies.get(SESSION_EXP_COOKIE)?.value
+    if (expRaw) {
+      const expTimestamp = parseInt(expRaw, 10)
+      if (!isNaN(expTimestamp) && expTimestamp < Math.floor(Date.now() / 1000)) {
+        const loginUrl = new URL('/login', _request.url)
+        loginUrl.searchParams.set('from', pathname)
+        return NextResponse.redirect(loginUrl)
+      }
+    }
+  }
+
   const response = NextResponse.next()
 
   // Content-Security-Policy
