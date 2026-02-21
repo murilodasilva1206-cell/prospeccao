@@ -283,14 +283,15 @@ describe('RecipientPaginationSchema', () => {
 // ---------------------------------------------------------------------------
 
 describe('CAMPAIGN_STATUSES', () => {
-  it('contains all 9 expected statuses', () => {
-    expect(CAMPAIGN_STATUSES).toHaveLength(9)
+  it('contains all 10 expected statuses (including paused)', () => {
+    expect(CAMPAIGN_STATUSES).toHaveLength(10)
     expect(CAMPAIGN_STATUSES).toContain('draft')
     expect(CAMPAIGN_STATUSES).toContain('awaiting_confirmation')
     expect(CAMPAIGN_STATUSES).toContain('awaiting_channel')
     expect(CAMPAIGN_STATUSES).toContain('awaiting_message')
     expect(CAMPAIGN_STATUSES).toContain('ready_to_send')
     expect(CAMPAIGN_STATUSES).toContain('sending')
+    expect(CAMPAIGN_STATUSES).toContain('paused')
     expect(CAMPAIGN_STATUSES).toContain('completed')
     expect(CAMPAIGN_STATUSES).toContain('completed_with_errors')
     expect(CAMPAIGN_STATUSES).toContain('cancelled')

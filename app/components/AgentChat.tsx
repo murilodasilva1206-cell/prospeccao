@@ -239,15 +239,14 @@ export default function AgentChat() {
   // ---------------------------------------------------------------------------
 
   const handleCampaignComplete = useCallback(
-    (result: { status: string; batch_sent: number; batch_failed: number }) => {
+    () => {
       setPendingCampaign(null)
-      setCampaignResult({ sent: result.batch_sent, failed: result.batch_failed })
       setMessages((prev) => [
         ...prev,
         {
           id: genId(),
           role: 'agent',
-          text: `Campanha enviada! ${result.batch_sent} mensagens enviadas${result.batch_failed > 0 ? `, ${result.batch_failed} falhas` : ''}.`,
+          text: 'Campanha concluida! Veja os resultados no painel de progresso.',
         },
       ])
     },
@@ -436,10 +435,8 @@ export default function AgentChat() {
           recipients={pendingCampaign.recipients}
           searchNicho={pendingCampaign.nicho}
           onClose={() => {
-            // Cancel campaign before closing
-            fetch(`/api/campaigns/${pendingCampaign.campaignId}/cancel`, {
-              method: 'POST',
-            }).catch(() => {})
+            // CampaignWizard handles cancel internally (pre-start only).
+            // Post-start: automation keeps running after the panel is closed.
             setPendingCampaign(null)
           }}
           onComplete={handleCampaignComplete}

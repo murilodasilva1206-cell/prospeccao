@@ -1,11 +1,12 @@
 'use client'
 
 // ---------------------------------------------------------------------------
-// CampaignWizard — 3-step modal to configure and send a campaign.
+// CampaignWizard — 3-step modal to configure and start a campaign.
 //
 // Step 1: Select WhatsApp channel
 // Step 2: Set message (template for META_CLOUD, text for others)
-// Step 3: Review & send
+// Step 3: Configure automation (delay, jitter, rate limits, working hours)
+//         → "Iniciar campanha" triggers POST /start and opens CampaignProgressPanel
 //
 // Security:
 //   - confirmation_token echoed back from campaign creation (never guessable)
@@ -14,9 +15,10 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useEffect, useCallback } from 'react'
-import { X, ChevronRight, ChevronLeft, Send, Check, AlertCircle, Loader2 } from 'lucide-react'
+import { X, ChevronRight, ChevronLeft, Play, Check, AlertCircle, Loader2, Clock } from 'lucide-react'
 import { FIRST_CONTACT_TEMPLATES, applyMessageTemplate } from '@/lib/agent-humanizer'
 import type { PublicEmpresa } from '@/lib/mask-output'
+import CampaignProgressPanel from './CampaignProgressPanel'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -30,21 +32,13 @@ interface Channel {
   phone_number: string | null
 }
 
-interface SendResult {
-  status: 'completed' | 'completed_with_errors' | 'sending'
-  batch_sent: number
-  batch_failed: number
-  remaining_pending: number
-  completed: boolean
-}
-
 interface Props {
   campaignId: string
   confirmationToken: string
   recipients: PublicEmpresa[]
   searchNicho?: string
   onClose: () => void
-  onComplete: (result: SendResult) => void
+  onComplete: () => void
 }
 
 // ---------------------------------------------------------------------------
@@ -86,13 +80,12 @@ export default function CampaignWizard({
   const [step, setStep] = useState<1 | 2 | 3>(1)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [started, setStarted] = useState(false)
 
   // Step 1 state
   const [channels, setChannels] = useState<Channel[]>([])
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null)
   const [channelsLoading, setChannelsLoading] = useState(true)
-  // Track whether /confirm was already called — the token is single-use and the
-  // campaign leaves 'draft' after the first call, so retrying would 409.
   const [confirmed, setConfirmed] = useState(false)
 
   // Step 2 state
@@ -101,11 +94,18 @@ export default function CampaignWizard({
   const [templateName, setTemplateName] = useState('')
   const [templateLang, setTemplateLang] = useState('pt_BR')
 
+  // Step 3 — automation config
+  const [delayMinutes, setDelayMinutes] = useState(2)
+  const [jitterSeconds, setJitterSeconds] = useState(20)
+  const [maxPerHour, setMaxPerHour] = useState(30)
+  const [maxRetries, setMaxRetries] = useState(3)
+  const [useWorkingHours, setUseWorkingHours] = useState(false)
+  const [workingStart, setWorkingStart] = useState(8)
+  const [workingEnd, setWorkingEnd] = useState(18)
+
   // Derived
   const selectedChannel = channels.find((c) => c.id === selectedChannelId) ?? null
   const isMetaCloud = selectedChannel?.provider === 'META_CLOUD'
-
-  // Sample recipient for preview
   const sample = recipients[0]
 
   // ---------------------------------------------------------------------------
@@ -133,7 +133,6 @@ export default function CampaignWizard({
       .finally(() => setChannelsLoading(false))
   }, [])
 
-  // When template selection changes, update customBody
   useEffect(() => {
     const tmpl = FIRST_CONTACT_TEMPLATES.find((t) => t.id === selectedTemplateId)
     if (tmpl) setCustomBody(tmpl.body)
@@ -148,16 +147,12 @@ export default function CampaignWizard({
     setLoading(true)
     setError(null)
     try {
-      // Confirm campaign only once — token is single-use and campaign leaves 'draft'
-      // immediately. Re-calling after a back-navigation would 409.
       if (!confirmed) {
         await apiPost(`/api/campaigns/${campaignId}/confirm`, {
           confirmation_token: confirmationToken,
         })
         setConfirmed(true)
       }
-      // Select channel — idempotent; also accepted when status is 'awaiting_message'
-      // so the user can change channel after going back from step 2.
       await apiPost(`/api/campaigns/${campaignId}/select-channel`, {
         channel_id: selectedChannelId,
       })
@@ -200,37 +195,40 @@ export default function CampaignWizard({
     }
   }, [selectedChannel, isMetaCloud, templateName, templateLang, customBody, campaignId])
 
-  const handleSend = useCallback(async () => {
+  // Close the wizard.
+  // Pre-start (steps 1–3): cancel the campaign so it doesn't sit in a setup state.
+  // Post-start (progress panel visible): just close — automation keeps running.
+  // Explicit campaign cancellation is done via the "Cancelar" button in the progress panel.
+  const handleClose = useCallback(async () => {
+    if (!started) {
+      fetch(`/api/campaigns/${campaignId}/cancel`, { method: 'POST' }).catch(() => {})
+    }
+    onClose()
+  }, [started, campaignId, onClose])
+
+  const handleStart = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      // Poll /send until the campaign is fully completed. Each call processes up
-      // to BATCH_SIZE (100) recipients; campaigns with >100 recipients need
-      // multiple calls to finish.
-      let accumulated = { batch_sent: 0, batch_failed: 0 }
-      let result: SendResult
-      do {
-        const res = await apiPost<{ data: SendResult }>(
-          `/api/campaigns/${campaignId}/send`,
-          {},
-        )
-        result = res.data
-        accumulated.batch_sent += result.batch_sent
-        accumulated.batch_failed += result.batch_failed
-        if (!result.completed) {
-          await new Promise((resolve) => setTimeout(resolve, 1500))
-        }
-      } while (!result.completed)
-      onComplete({ ...result, batch_sent: accumulated.batch_sent, batch_failed: accumulated.batch_failed })
+      await apiPost(`/api/campaigns/${campaignId}/start`, {
+        delay_seconds: Math.max(10, delayMinutes * 60),
+        jitter_max:    Math.max(0, jitterSeconds),
+        max_per_hour:  Math.max(1, maxPerHour),
+        max_retries:   Math.max(0, maxRetries),
+        ...(useWorkingHours
+          ? { working_hours_start: workingStart, working_hours_end: workingEnd }
+          : {}),
+      })
+      setStarted(true)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao enviar')
+      setError(err instanceof Error ? err.message : 'Erro ao iniciar campanha')
     } finally {
       setLoading(false)
     }
-  }, [campaignId, onComplete])
+  }, [campaignId, delayMinutes, jitterSeconds, maxPerHour, maxRetries, useWorkingHours, workingStart, workingEnd])
 
   // ---------------------------------------------------------------------------
-  // Preview text (for non-Meta)
+  // Preview text
   // ---------------------------------------------------------------------------
   const previewText = sample
     ? applyMessageTemplate(customBody, {
@@ -242,9 +240,26 @@ export default function CampaignWizard({
     : customBody
 
   // ---------------------------------------------------------------------------
-  // Render
+  // After start: show progress panel inside the same overlay
   // ---------------------------------------------------------------------------
+  if (started) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="w-full max-w-xl">
+          <CampaignProgressPanel
+            campaignId={campaignId}
+            recipientCount={recipients.length}
+            onClose={onClose}
+            onComplete={onComplete}
+          />
+        </div>
+      </div>
+    )
+  }
 
+  // ---------------------------------------------------------------------------
+  // Wizard steps
+  // ---------------------------------------------------------------------------
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="relative w-full max-w-xl rounded-2xl border border-zinc-200 bg-white shadow-2xl">
@@ -255,23 +270,18 @@ export default function CampaignWizard({
             <p className="text-xs text-zinc-500">{recipients.length} destinatarios</p>
           </div>
           <div className="flex items-center gap-4">
-            {/* Step indicator */}
             <div className="flex items-center gap-1.5">
               {([1, 2, 3] as const).map((s) => (
                 <div
                   key={s}
                   className={`h-2 w-2 rounded-full transition-colors ${
-                    step === s
-                      ? 'bg-emerald-500'
-                      : step > s
-                      ? 'bg-emerald-300'
-                      : 'bg-zinc-200'
+                    step === s ? 'bg-emerald-500' : step > s ? 'bg-emerald-300' : 'bg-zinc-200'
                   }`}
                 />
               ))}
             </div>
             <button
-              onClick={onClose}
+              onClick={handleClose}
               className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600"
             >
               <X className="size-4" />
@@ -279,7 +289,7 @@ export default function CampaignWizard({
           </div>
         </div>
 
-        {/* Error */}
+        {/* Error banner */}
         {error && (
           <div className="mx-6 mt-4 flex items-center gap-2 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
             <AlertCircle className="size-4 shrink-0" />
@@ -299,10 +309,7 @@ export default function CampaignWizard({
             ) : channels.length === 0 ? (
               <p className="py-6 text-center text-sm text-zinc-500">
                 Nenhum canal conectado. Configure em{' '}
-                <a href="/whatsapp/canais" className="text-emerald-600 underline">
-                  Canais
-                </a>
-                .
+                <a href="/whatsapp/canais" className="text-emerald-600 underline">Canais</a>.
               </p>
             ) : (
               <div className="space-y-2">
@@ -324,9 +331,7 @@ export default function CampaignWizard({
                           {ch.phone_number ? ` · ${ch.phone_number}` : ''}
                         </p>
                       </div>
-                      {selectedChannelId === ch.id && (
-                        <Check className="size-4 text-emerald-500" />
-                      )}
+                      {selectedChannelId === ch.id && <Check className="size-4 text-emerald-500" />}
                     </div>
                     {ch.provider === 'META_CLOUD' && (
                       <p className="mt-1.5 rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">
@@ -351,13 +356,10 @@ export default function CampaignWizard({
                 ? 'Informe o nome e idioma do template aprovado na sua conta Meta.'
                 : 'Escolha um modelo ou edite livremente. Placeholders: [Nome], [Empresa], [segmento], [cidade].'}
             </p>
-
             {isMetaCloud ? (
               <div className="space-y-3">
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-zinc-700">
-                    Nome do template
-                  </label>
+                  <label className="mb-1 block text-xs font-medium text-zinc-700">Nome do template</label>
                   <input
                     value={templateName}
                     onChange={(e) => setTemplateName(e.target.value)}
@@ -366,9 +368,7 @@ export default function CampaignWizard({
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-zinc-700">
-                    Idioma
-                  </label>
+                  <label className="mb-1 block text-xs font-medium text-zinc-700">Idioma</label>
                   <select
                     value={templateLang}
                     onChange={(e) => setTemplateLang(e.target.value)}
@@ -382,7 +382,6 @@ export default function CampaignWizard({
               </div>
             ) : (
               <div className="space-y-3">
-                {/* Template buttons */}
                 <div className="flex flex-wrap gap-2">
                   {FIRST_CONTACT_TEMPLATES.map((t) => (
                     <button
@@ -398,8 +397,6 @@ export default function CampaignWizard({
                     </button>
                   ))}
                 </div>
-
-                {/* Editable message body */}
                 <textarea
                   value={customBody}
                   onChange={(e) => setCustomBody(e.target.value)}
@@ -407,8 +404,6 @@ export default function CampaignWizard({
                   maxLength={4096}
                   className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400"
                 />
-
-                {/* Preview with first recipient */}
                 {sample && (
                   <div className="rounded-lg bg-zinc-50 px-3 py-2">
                     <p className="mb-1 text-xs font-medium text-zinc-500">Preview (1o destinatario):</p>
@@ -420,45 +415,104 @@ export default function CampaignWizard({
           </div>
         )}
 
-        {/* Step 3: Review & send */}
+        {/* Step 3: Configure automation */}
         {step === 3 && (
           <div className="p-6">
-            <h3 className="mb-1 text-sm font-medium text-zinc-900">Revisar e enviar</h3>
-            <p className="mb-4 text-xs text-zinc-500">Confira antes de disparar.</p>
-            <div className="space-y-2 rounded-xl border border-zinc-200 p-4 text-sm">
-              <div className="flex justify-between">
-                <span className="text-zinc-500">Destinatarios</span>
-                <span className="font-medium text-zinc-900">{recipients.length}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500">Canal</span>
-                <span className="font-medium text-zinc-900">
-                  {selectedChannel?.name} ({selectedChannel && providerLabel(selectedChannel.provider)})
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500">Tipo</span>
-                <span className="font-medium text-zinc-900">
-                  {isMetaCloud ? `Template: ${templateName}` : 'Texto personalizado'}
-                </span>
-              </div>
-              {!isMetaCloud && sample && (
-                <div className="mt-2 border-t border-zinc-100 pt-2">
-                  <p className="mb-1 text-xs text-zinc-500">Preview:</p>
-                  <p className="text-xs text-zinc-700">{previewText}</p>
-                </div>
-              )}
-            </div>
-            <p className="mt-3 text-xs text-amber-700">
-              Esta acao envia mensagens reais via WhatsApp. Confirme antes de prosseguir.
+            <h3 className="mb-1 text-sm font-medium text-zinc-900">Configurar automacao</h3>
+            <p className="mb-4 text-xs text-zinc-500">
+              O envio sera escalonado. Voce pode pausar ou cancelar a qualquer momento.
             </p>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-zinc-700">Intervalo (minutos)</label>
+                  <input
+                    type="number" min={1} max={1440} value={delayMinutes}
+                    onChange={(e) => setDelayMinutes(Math.max(1, Number(e.target.value)))}
+                    className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-zinc-700">Variacao (segundos)</label>
+                  <input
+                    type="number" min={0} max={300} value={jitterSeconds}
+                    onChange={(e) => setJitterSeconds(Math.max(0, Number(e.target.value)))}
+                    className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-zinc-700">Max por hora</label>
+                  <input
+                    type="number" min={1} max={500} value={maxPerHour}
+                    onChange={(e) => setMaxPerHour(Math.max(1, Number(e.target.value)))}
+                    className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-zinc-700">Tentativas em falha</label>
+                  <input
+                    type="number" min={0} max={10} value={maxRetries}
+                    onChange={(e) => setMaxRetries(Math.max(0, Number(e.target.value)))}
+                    className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-zinc-700">
+                  <input
+                    type="checkbox" checked={useWorkingHours}
+                    onChange={(e) => setUseWorkingHours(e.target.checked)}
+                    className="rounded border-zinc-300"
+                  />
+                  Restringir horario de envio (UTC-3, Brasilia)
+                </label>
+                {useWorkingHours && (
+                  <div className="mt-2 grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="mb-1 block text-xs text-zinc-500">Inicio (hora 0-23)</label>
+                      <input
+                        type="number" min={0} max={23} value={workingStart}
+                        onChange={(e) => setWorkingStart(Number(e.target.value))}
+                        className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-emerald-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs text-zinc-500">Fim (hora 0-23)</label>
+                      <input
+                        type="number" min={0} max={23} value={workingEnd}
+                        onChange={(e) => setWorkingEnd(Number(e.target.value))}
+                        className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-emerald-400"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="space-y-1 rounded-xl border border-zinc-100 bg-zinc-50 p-3 text-xs">
+                <div className="flex justify-between text-zinc-600">
+                  <span>Destinatarios</span>
+                  <span className="font-medium text-zinc-900">{recipients.length}</span>
+                </div>
+                <div className="flex justify-between text-zinc-600">
+                  <span>Canal</span>
+                  <span className="font-medium text-zinc-900">
+                    {selectedChannel?.name} ({selectedChannel && providerLabel(selectedChannel.provider)})
+                  </span>
+                </div>
+              </div>
+              <p className="flex items-start gap-1.5 text-xs text-amber-700">
+                <Clock className="mt-0.5 size-3.5 shrink-0" />
+                Envio continua automaticamente com o browser fechado. Mensagens reais serao enviadas via WhatsApp.
+              </p>
+            </div>
           </div>
         )}
 
-        {/* Footer buttons */}
+        {/* Footer */}
         <div className="flex items-center justify-between border-t border-zinc-100 px-6 py-4">
           <button
-            onClick={() => (step === 1 ? onClose() : setStep((s) => (s - 1) as 1 | 2 | 3))}
+            onClick={() => (step === 1 ? handleClose() : setStep((s) => (s - 1) as 1 | 2 | 3))}
             disabled={loading}
             className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm text-zinc-600 hover:bg-zinc-100 disabled:opacity-50"
           >
@@ -478,16 +532,12 @@ export default function CampaignWizard({
             </button>
           ) : (
             <button
-              onClick={handleSend}
+              onClick={handleStart}
               disabled={loading}
               className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
             >
-              {loading ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Send className="size-4" />
-              )}
-              Enviar agora
+              {loading ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
+              Iniciar campanha
             </button>
           )}
         </div>

@@ -27,6 +27,11 @@ const EnvSchema = z.object({
     .length(64, 'CREDENTIALS_ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes)')
     .regex(/^[0-9a-fA-F]{64}$/, 'CREDENTIALS_ENCRYPTION_KEY must be a valid hex string'),
 
+  // Secret used to authenticate Vercel Cron calls to POST /api/campaigns/process.
+  // Must be at least 32 characters. Optional — when absent the cron endpoint
+  // returns 503 so the app can still start in development without it.
+  CRON_SECRET: z.string().min(32).optional(),
+
   // ---------------------------------------------------------------------------
   // S3-compatible media storage (AWS S3 or Cloudflare R2)
   //

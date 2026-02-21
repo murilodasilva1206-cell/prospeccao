@@ -1,6 +1,13 @@
-// POST /api/campaigns/:id/send — start (or resume) sending campaign messages
+// POST /api/campaigns/:id/send — legacy synchronous batch sender
 //
-// Transitions: ready_to_send | sending → sending → completed | completed_with_errors
+// NOTE: For new integrations use the automation flow instead:
+//   POST /api/campaigns/:id/start  — begin cron-driven automated sending
+//   POST /api/campaigns/:id/pause  — pause automation
+//   POST /api/campaigns/:id/resume — resume automation
+//
+// This endpoint is restricted to campaigns in status=ready_to_send only.
+// Campaigns already in 'sending' (automation running) return 409 to prevent
+// mixing the two send paths and bypassing configured delays/pauses.
 //
 // Security:
 //   - Validates workspace ownership before accessing channel credentials.
@@ -74,7 +81,13 @@ export async function POST(request: NextRequest, { params }: Params) {
     if (campaign.workspace_id !== auth.workspace_id) {
       return NextResponse.json({ error: 'Acesso negado' }, { status: 403 })
     }
-    if (campaign.status !== 'ready_to_send' && campaign.status !== 'sending') {
+    if (campaign.status === 'sending') {
+      return NextResponse.json(
+        { error: 'Campanha ja iniciada via automacao — use /pause, /resume ou /cancel em vez de /send' },
+        { status: 409 },
+      )
+    }
+    if (campaign.status !== 'ready_to_send') {
       return NextResponse.json(
         { error: `Campanha nao pode ser enviada (status: ${campaign.status})` },
         { status: 409 },

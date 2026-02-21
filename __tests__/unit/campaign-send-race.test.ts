@@ -130,11 +130,12 @@ function makeParams() {
   return { params: Promise.resolve({ id: CAMPAIGN_ID }) }
 }
 
-/** A campaign that is in 'sending' state with channel + message configured. */
+/** A campaign in 'ready_to_send' with channel + message configured.
+ *  The route transitions it to 'sending' internally via updateCampaignStatus. */
 const sendingCampaign = {
   id: CAMPAIGN_ID,
   workspace_id: 'ws-test',
-  status: 'sending',
+  status: 'ready_to_send',
   channel_id: 'ch-1',
   message_type: 'text',
   message_content: { body: 'Ola [Nome]!' },
@@ -189,8 +190,12 @@ describe('POST /api/campaigns/:id/send — finalization race condition', () => {
     // once for auth check, once for the race-loss re-read
     expect(mockFindCampaignById).toHaveBeenCalledTimes(2)
 
-    // No audit entry should be written by the loser
-    expect(mockInsertCampaignAudit).not.toHaveBeenCalled()
+    // 'sending_started' audit is written when transitioning ready_to_send → sending,
+    // but the race LOSER must NOT write a 'completed' audit entry.
+    expect(mockInsertCampaignAudit).toHaveBeenCalledTimes(1)
+    expect(mockInsertCampaignAudit).toHaveBeenCalledWith(
+      expect.anything(), CAMPAIGN_ID, 'sending_started', 'key-test', expect.any(Object),
+    )
   })
 
   it('returns status=completed when finalizeCampaign loses the race and DB shows completed', async () => {
@@ -246,8 +251,8 @@ describe('POST /api/campaigns/:id/send — finalization race condition', () => {
     expect(body.data.status).toBe('completed_with_errors')
     expect(body.data.completed).toBe(true)
 
-    // Winner writes the audit entry
-    expect(mockInsertCampaignAudit).toHaveBeenCalledOnce()
+    // Winner writes two audit entries: 'sending_started' + 'completed'
+    expect(mockInsertCampaignAudit).toHaveBeenCalledTimes(2)
     expect(mockInsertCampaignAudit).toHaveBeenCalledWith(
       mockClient,
       CAMPAIGN_ID,

@@ -84,7 +84,9 @@ describe('POST /api/agente', () => {
     expect(res.status).toBe(400)
   })
 
-  it('blocks prompt injection attempts without calling AI', async () => {
+  it('blocks prompt injection attempts without calling AI', async (ctx) => {
+    // Auth now runs before injection check so a DB connection is needed.
+    if (!dbAvailable) ctx.skip()
     // Override default handler to track if OpenRouter was called
     let openRouterCalled = false
     server.use(
@@ -98,8 +100,9 @@ describe('POST /api/agente', () => {
     const res = await POST(req)
     const body = await res.json()
 
-    // Must be rejected — either 200 with action=reject or blocked before AI
-    expect([200, 429]).toContain(res.status)
+    // Must be blocked before AI — 200/action=reject (injection blocked), 401 (auth
+    // failed before injection check), or 429 (rate limited). OpenRouter must not fire.
+    expect([200, 401, 429]).toContain(res.status)
     if (res.status === 200) {
       expect(body.action).toBe('reject')
     }
@@ -120,7 +123,9 @@ describe('POST /api/agente', () => {
     expect(statuses).toContain(429)
   })
 
-  it('returns 503 when circuit breaker is OPEN', async () => {
+  it('returns 503 when circuit breaker is OPEN', async (ctx) => {
+    // Auth is required to reach the AI call — skip when DB is unavailable
+    if (!dbAvailable) ctx.skip()
     // Force OpenRouter to fail repeatedly
     server.use(
       http.post('https://openrouter.ai/api/v1/chat/completions', () => {
@@ -144,7 +149,9 @@ describe('POST /api/agente', () => {
     expect([429, 503]).toContain(res.status)
   })
 
-  it('handles OpenRouter returning invalid JSON gracefully (fallback)', async () => {
+  it('handles OpenRouter returning invalid JSON gracefully (fallback)', async (ctx) => {
+    // Auth is required to reach the AI call — skip when DB is unavailable
+    if (!dbAvailable) ctx.skip()
     server.use(
       http.post('https://openrouter.ai/api/v1/chat/completions', () => {
         return HttpResponse.json({

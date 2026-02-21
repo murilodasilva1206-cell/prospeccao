@@ -11,6 +11,7 @@
     "test:unit": "vitest run __tests__/unit/",
     "test:security": "vitest run __tests__/security/",
     "test:integration": "vitest run __tests__/integration/ __tests__/contracts/",
+    "test:all": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage --exclude='**/__tests__/integration/**' --exclude='**/__tests__/contracts/**'",
     "audit": "npm audit --audit-level=moderate",

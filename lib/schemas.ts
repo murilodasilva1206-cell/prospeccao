@@ -236,11 +236,54 @@ export const CAMPAIGN_STATUSES = [
   'awaiting_message',
   'ready_to_send',
   'sending',
+  'paused',
   'completed',
   'completed_with_errors',
   'cancelled',
 ] as const
 export type CampaignStatus = (typeof CAMPAIGN_STATUSES)[number]
+
+/** POST /api/campaigns/:id/start — begin automated sending */
+export const AutomationConfigSchema = z
+  .object({
+    delay_seconds:       z.number().int().min(10).max(86400).default(120),
+    jitter_max:          z.number().int().min(0).max(300).default(20),
+    max_per_hour:        z.number().int().min(1).max(500).default(30),
+    max_retries:         z.number().int().min(0).max(10).default(3),
+    working_hours_start: z.number().int().min(0).max(23).optional(),
+    working_hours_end:   z.number().int().min(0).max(23).optional(),
+  })
+  .refine(
+    (v) => (v.working_hours_start == null) === (v.working_hours_end == null),
+    {
+      message: 'working_hours_start e working_hours_end devem ser fornecidos juntos ou omitidos juntos',
+      path: ['working_hours_start'],
+    },
+  )
+export type AutomationConfig = z.infer<typeof AutomationConfigSchema>
+
+/** PATCH /api/campaigns/:id/automation — update config while running/paused */
+export const UpdateAutomationSchema = z
+  .object({
+    delay_seconds:       z.number().int().min(10).max(86400).optional(),
+    jitter_max:          z.number().int().min(0).max(300).optional(),
+    max_per_hour:        z.number().int().min(1).max(500).optional(),
+    max_retries:         z.number().int().min(0).max(10).optional(),
+    working_hours_start: z.number().int().min(0).max(23).nullable().optional(),
+    working_hours_end:   z.number().int().min(0).max(23).nullable().optional(),
+  })
+  .refine(
+    (v) => {
+      const hasStart = v.working_hours_start !== undefined
+      const hasEnd   = v.working_hours_end !== undefined
+      return hasStart === hasEnd
+    },
+    {
+      message: 'working_hours_start e working_hours_end devem ser fornecidos juntos ou omitidos juntos',
+      path: ['working_hours_start'],
+    },
+  )
+export type UpdateAutomation = z.infer<typeof UpdateAutomationSchema>
 
 /** Single lead in a campaign recipient list */
 export const CampaignRecipientInputSchema = z.object({

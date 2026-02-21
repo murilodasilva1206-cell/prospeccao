@@ -19,6 +19,8 @@ export default defineConfig({
       NODE_ENV: 'test',
       // 64 hex chars = 32 bytes — safe placeholder for tests only
       CREDENTIALS_ENCRYPTION_KEY: 'a'.repeat(64),
+      // Cron secret placeholder — 32+ chars required by Zod schema
+      CRON_SECRET: 'test-cron-secret-this-is-32-chars!!',
       // Enable media storage in tests so S3-related tests work with MSW mocks
       MEDIA_STORAGE_ENABLED: 'true',
       // S3 placeholders — real credentials only in .env.local / CI secrets

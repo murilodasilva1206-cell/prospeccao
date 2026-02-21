@@ -12,6 +12,7 @@
 
 import { createHash, createHmac } from 'crypto'
 import { safeCompare } from '../crypto'
+import { RetryableError } from '../errors'
 import type { IWhatsAppAdapter, ConnectResult, SendResult, DownloadResult } from './interface'
 import type { Channel, ChannelCredentials, ChannelStatus, WhatsAppEvent } from '../types'
 
@@ -88,6 +89,9 @@ export class MetaAdapter implements IWhatsAppAdapter {
     })
     if (!res.ok) {
       const body = await res.text().catch(() => '')
+      if (res.status === 429 || res.status >= 500) {
+        throw new RetryableError(`Meta sendMessage falhou (${res.status}): ${body}`)
+      }
       throw new Error(`Meta sendMessage falhou (${res.status}): ${body}`)
     }
     const data = (await res.json()) as { messages?: Array<{ id?: string }> }
@@ -241,6 +245,9 @@ export class MetaAdapter implements IWhatsAppAdapter {
 
     if (!res.ok) {
       const body = await res.text().catch(() => '')
+      if (res.status === 429 || res.status >= 500) {
+        throw new RetryableError(`Meta sendTemplate falhou (${res.status}): ${body}`)
+      }
       throw new Error(`Meta sendTemplate falhou (${res.status}): ${body}`)
     }
 

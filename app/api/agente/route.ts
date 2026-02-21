@@ -36,7 +36,27 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  // 2. Authentication — session cookie (web UI) or Bearer wk_... token (API)
+  // 2. Parse and validate request body — before any DB hit so invalid payloads
+  //    are rejected cheaply without consuming a connection.
+  let body
+  try {
+    const raw = await request.json()
+    body = AgenteBodySchema.parse(raw)
+  } catch (err) {
+    if (err instanceof ZodError) {
+      log.info({ issues: err.issues }, 'Validation error on /api/agente')
+      return NextResponse.json(
+        { error: 'Requisicao invalida', details: err.issues },
+        { status: 400 },
+      )
+    }
+    log.info({ err }, 'Invalid JSON body on /api/agente')
+    return NextResponse.json({ error: 'JSON invalido no corpo da requisicao' }, { status: 400 })
+  }
+
+  // 3. Authentication — session cookie (web UI) or Bearer wk_... token (API)
+  // Runs after parse (no DB cost for bad payloads) but before injection check so
+  // unauthenticated callers always receive 401/403, never a rejection message.
   // Note: workspace_id is captured for audit logging only.
   // `estabelecimentos` is a public CNPJ registry shared across all workspaces —
   // filtering by workspace_id would be incorrect here.
@@ -55,24 +75,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // 3. Parse and validate request body
-  let body
-  try {
-    const raw = await request.json()
-    body = AgenteBodySchema.parse(raw)
-  } catch (err) {
-    if (err instanceof ZodError) {
-      log.info({ issues: err.issues }, 'Validation error on /api/agente')
-      return NextResponse.json(
-        { error: 'Requisicao invalida', details: err.issues },
-        { status: 400 },
-      )
-    }
-    log.info({ err }, 'Invalid JSON body on /api/agente')
-    return NextResponse.json({ error: 'JSON invalido no corpo da requisicao' }, { status: 400 })
-  }
-
-  // 4. Pre-screen for prompt injection BEFORE calling the AI (fast, no API cost)
+  // 4. Pre-screen for prompt injection — fast regex check, no API cost
   if (detectInjectionAttempt(body.message)) {
     log.warn(
       { messagePreview: body.message.slice(0, 100) },

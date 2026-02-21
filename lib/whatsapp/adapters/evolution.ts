@@ -14,6 +14,7 @@
 
 import { createHash } from 'crypto'
 import { safeCompare } from '../crypto'
+import { RetryableError } from '../errors'
 import type { IWhatsAppAdapter, ConnectResult, SendResult, DownloadResult } from './interface'
 import type { Channel, ChannelCredentials, ChannelStatus, WhatsAppEvent } from '../types'
 
@@ -155,6 +156,9 @@ export class EvolutionAdapter implements IWhatsAppAdapter {
 
     if (!res.ok) {
       const body = await res.text().catch(() => '')
+      if (res.status === 429 || res.status >= 500) {
+        throw new RetryableError(`Evolution sendMessage falhou (${res.status}): ${body}`)
+      }
       throw new Error(`Evolution sendMessage falhou (${res.status}): ${body}`)
     }
 

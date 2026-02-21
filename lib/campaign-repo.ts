@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import type { PoolClient } from 'pg'
-import type { CampaignStatus, CampaignRecipientInput } from '@/lib/schemas'
+import type { CampaignStatus, CampaignRecipientInput, AutomationConfig, UpdateAutomation } from '@/lib/schemas'
 import { env } from '@/lib/env'
 
 // ---------------------------------------------------------------------------
@@ -28,6 +28,15 @@ export interface Campaign {
   created_by: string
   created_at: Date
   updated_at: Date
+  // Automation
+  automation_delay_seconds: number
+  automation_jitter_max: number
+  automation_max_per_hour: number
+  automation_working_hours_start: number | null
+  automation_working_hours_end: number | null
+  max_retries: number
+  next_send_at: Date | null
+  paused_at: Date | null
 }
 
 export interface CampaignRecipient {
@@ -45,6 +54,8 @@ export interface CampaignRecipient {
   error_message: string | null
   sent_at: Date | null
   processing_started_at: Date | null
+  retry_count: number
+  next_retry_at: Date | null
   created_at: Date
 }
 
@@ -69,6 +80,15 @@ function rowToCampaign(row: Record<string, unknown>): Campaign {
     created_by: row.created_by as string,
     created_at: new Date(row.created_at as string),
     updated_at: new Date(row.updated_at as string),
+    // Automation (defaults match migration 014 column defaults)
+    automation_delay_seconds: Number(row.automation_delay_seconds ?? 120),
+    automation_jitter_max: Number(row.automation_jitter_max ?? 20),
+    automation_max_per_hour: Number(row.automation_max_per_hour ?? 30),
+    automation_working_hours_start: row.automation_working_hours_start != null ? Number(row.automation_working_hours_start) : null,
+    automation_working_hours_end: row.automation_working_hours_end != null ? Number(row.automation_working_hours_end) : null,
+    max_retries: Number(row.max_retries ?? 3),
+    next_send_at: row.next_send_at ? new Date(row.next_send_at as string) : null,
+    paused_at: row.paused_at ? new Date(row.paused_at as string) : null,
   }
 }
 
@@ -88,6 +108,8 @@ function rowToRecipient(row: Record<string, unknown>): CampaignRecipient {
     error_message: (row.error_message as string | null) ?? null,
     sent_at: row.sent_at ? new Date(row.sent_at as string) : null,
     processing_started_at: row.processing_started_at ? new Date(row.processing_started_at as string) : null,
+    retry_count: Number(row.retry_count ?? 0),
+    next_retry_at: row.next_retry_at ? new Date(row.next_retry_at as string) : null,
     created_at: new Date(row.created_at as string),
   }
 }
@@ -203,6 +225,30 @@ export async function updateCampaignStatus(
 }
 
 /**
+ * Atomically cancel a campaign if it is still in a cancellable status.
+ * The status guard is part of the WHERE clause so the check and the update
+ * cannot race — no separate read is needed to guard the cancellation.
+ * Returns the updated campaign, or null if already in a terminal state.
+ */
+export async function cancelCampaignIfAllowed(
+  client: PoolClient,
+  id: string,
+): Promise<Campaign | null> {
+  const { rows } = await client.query(
+    `UPDATE campaigns
+     SET status = 'cancelled'
+     WHERE id = $1
+       AND status IN (
+         'draft','awaiting_confirmation','awaiting_channel','awaiting_message',
+         'ready_to_send','sending','paused'
+       )
+     RETURNING *`,
+    [id],
+  )
+  return rows[0] ? rowToCampaign(rows[0]) : null
+}
+
+/**
  * Atomically transition a campaign from 'sending' → 'completed' or
  * 'completed_with_errors' by computing the correct final status from the
  * actual count of failed recipients in the DB at that moment.
@@ -315,7 +361,10 @@ export async function claimPendingRecipients(
        FROM campaign_recipients
        WHERE campaign_id = $1
          AND (
-           status = 'pending'
+           (
+             status = 'pending'
+             AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+           )
            OR (
              status = 'processing'
              AND (processing_started_at IS NULL
@@ -429,6 +478,237 @@ export async function updateRecipientStatus(
       extra.sent_at ?? null,
     ],
   )
+}
+
+// ---------------------------------------------------------------------------
+// Automation control
+// ---------------------------------------------------------------------------
+
+/**
+ * Transition ready_to_send → sending and store the automation config.
+ * Sets next_send_at = NOW() so the cron processes this campaign on the next tick.
+ * Returns null if the campaign is not in 'ready_to_send' state (idempotency guard).
+ */
+export async function startCampaignAutomation(
+  client: PoolClient,
+  id: string,
+  config: AutomationConfig,
+): Promise<Campaign | null> {
+  const { rows } = await client.query(
+    `UPDATE campaigns
+     SET status                          = 'sending',
+         automation_delay_seconds        = $2,
+         automation_jitter_max           = $3,
+         automation_max_per_hour         = $4,
+         automation_working_hours_start  = $5,
+         automation_working_hours_end    = $6,
+         max_retries                     = $7,
+         next_send_at                    = NOW(),
+         paused_at                       = NULL
+     WHERE id = $1 AND status = 'ready_to_send'
+     RETURNING *`,
+    [
+      id,
+      config.delay_seconds,
+      config.jitter_max,
+      config.max_per_hour,
+      config.working_hours_start ?? null,
+      config.working_hours_end ?? null,
+      config.max_retries,
+    ],
+  )
+  return rows.length > 0 ? rowToCampaign(rows[0]) : null
+}
+
+/** Transition sending → paused. Records paused_at timestamp for audit. */
+export async function pauseCampaign(
+  client: PoolClient,
+  id: string,
+): Promise<Campaign | null> {
+  const { rows } = await client.query(
+    `UPDATE campaigns
+     SET status    = 'paused',
+         paused_at = NOW()
+     WHERE id = $1 AND status = 'sending'
+     RETURNING *`,
+    [id],
+  )
+  return rows.length > 0 ? rowToCampaign(rows[0]) : null
+}
+
+/** Transition paused → sending. Resets next_send_at so the cron resumes immediately. */
+export async function resumeCampaign(
+  client: PoolClient,
+  id: string,
+): Promise<Campaign | null> {
+  const { rows } = await client.query(
+    `UPDATE campaigns
+     SET status       = 'sending',
+         paused_at    = NULL,
+         next_send_at = NOW()
+     WHERE id = $1 AND status = 'paused'
+     RETURNING *`,
+    [id],
+  )
+  return rows.length > 0 ? rowToCampaign(rows[0]) : null
+}
+
+/** Update automation config on a running or paused campaign. */
+export async function updateAutomationConfig(
+  client: PoolClient,
+  id: string,
+  patch: UpdateAutomation,
+): Promise<Campaign | null> {
+  // Only update fields that were explicitly provided in the patch
+  const { rows: current } = await client.query(
+    'SELECT * FROM campaigns WHERE id = $1',
+    [id],
+  )
+  if (current.length === 0) return null
+
+  const c = rowToCampaign(current[0])
+  const { rows } = await client.query(
+    `UPDATE campaigns
+     SET automation_delay_seconds       = $2,
+         automation_jitter_max          = $3,
+         automation_max_per_hour        = $4,
+         automation_working_hours_start = $5,
+         automation_working_hours_end   = $6,
+         max_retries                    = $7
+     WHERE id = $1 AND status IN ('sending', 'paused')
+     RETURNING *`,
+    [
+      id,
+      patch.delay_seconds      ?? c.automation_delay_seconds,
+      patch.jitter_max         ?? c.automation_jitter_max,
+      patch.max_per_hour       ?? c.automation_max_per_hour,
+      patch.working_hours_start !== undefined ? patch.working_hours_start : c.automation_working_hours_start,
+      patch.working_hours_end   !== undefined ? patch.working_hours_end   : c.automation_working_hours_end,
+      patch.max_retries        ?? c.max_retries,
+    ],
+  )
+  return rows.length > 0 ? rowToCampaign(rows[0]) : null
+}
+
+/**
+ * Atomically find and claim campaigns ready to process in this cron tick.
+ * Uses FOR UPDATE SKIP LOCKED on the campaigns rows, then immediately advances
+ * next_send_at by 5 minutes within the same transaction — preventing a second
+ * concurrent cron from picking up the same campaigns.
+ * The caller is responsible for COMMIT/ROLLBACK.
+ */
+export async function findAndClaimSendableCampaigns(
+  client: PoolClient,
+  limit: number,
+): Promise<Campaign[]> {
+  await client.query('BEGIN')
+  try {
+    const { rows: candidates } = await client.query(
+      `SELECT * FROM campaigns
+       WHERE status = 'sending'
+         AND next_send_at IS NOT NULL
+         AND next_send_at <= NOW()
+       ORDER BY next_send_at ASC
+       LIMIT $1
+       FOR UPDATE SKIP LOCKED`,
+      [limit],
+    )
+    if (candidates.length === 0) {
+      await client.query('COMMIT')
+      return []
+    }
+    const ids = candidates.map((r: Record<string, unknown>) => r.id as string)
+    // Advance next_send_at so concurrent cron runs skip these campaigns
+    await client.query(
+      `UPDATE campaigns
+       SET next_send_at = NOW() + INTERVAL '5 minutes'
+       WHERE id = ANY($1::uuid[])`,
+      [ids],
+    )
+    await client.query('COMMIT')
+    return candidates.map(rowToCampaign)
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {})
+    throw err
+  }
+}
+
+/** Update next_send_at for a campaign after a successful send. */
+export async function updateCampaignNextSendAt(
+  client: PoolClient,
+  id: string,
+  nextSendAt: Date,
+): Promise<void> {
+  await client.query(
+    'UPDATE campaigns SET next_send_at = $2 WHERE id = $1',
+    [id, nextSendAt],
+  )
+}
+
+/**
+ * Schedule a retry for a failed recipient with exponential backoff.
+ * If the retry count has reached max_retries, marks the recipient as 'failed' permanently.
+ * Returns 'failed' when the recipient hits the permanent failure state, 'retried' otherwise.
+ */
+export async function scheduleRecipientRetry(
+  client: PoolClient,
+  recipientId: string,
+  currentRetryCount: number,
+  maxRetries: number,
+  errorMessage: string,
+): Promise<'retried' | 'failed'> {
+  const newRetryCount = currentRetryCount + 1
+  if (newRetryCount >= maxRetries) {
+    await client.query(
+      `UPDATE campaign_recipients
+       SET status                  = 'failed',
+           error_message           = $2,
+           retry_count             = $3,
+           processing_started_at   = NULL
+       WHERE id = $1`,
+      [recipientId, `Maximo de tentativas (${maxRetries}): ${errorMessage}`, newRetryCount],
+    )
+    return 'failed'
+  } else {
+    const backoffSeconds = Math.pow(2, newRetryCount) * 30
+    await client.query(
+      `UPDATE campaign_recipients
+       SET status                = 'pending',
+           error_message         = $2,
+           retry_count           = $3,
+           next_retry_at         = NOW() + ($4 * INTERVAL '1 second'),
+           processing_started_at = NULL
+       WHERE id = $1`,
+      [recipientId, errorMessage, newRetryCount, backoffSeconds],
+    )
+    return 'retried'
+  }
+}
+
+/** Return a per-status count summary for a campaign (used by GET /status). */
+export async function getCampaignProgress(
+  client: PoolClient,
+  campaignId: string,
+): Promise<{ pending: number; processing: number; sent: number; failed: number; skipped: number }> {
+  const { rows } = await client.query(
+    `SELECT status, COUNT(*)::int AS count
+     FROM campaign_recipients
+     WHERE campaign_id = $1
+     GROUP BY status`,
+    [campaignId],
+  )
+  const map: Record<string, number> = {}
+  for (const r of rows) {
+    // eslint-disable-next-line security/detect-object-injection
+    map[r.status as string] = r.count as number
+  }
+  return {
+    pending:    map['pending']    ?? 0,
+    processing: map['processing'] ?? 0,
+    sent:       map['sent']       ?? 0,
+    failed:     map['failed']     ?? 0,
+    skipped:    map['skipped']    ?? 0,
+  }
 }
 
 // ---------------------------------------------------------------------------

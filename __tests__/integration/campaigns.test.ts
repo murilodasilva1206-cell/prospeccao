@@ -9,9 +9,14 @@ import { GET as getCampaignRoute } from '@/app/api/campaigns/[id]/route'
 import { POST as confirmRoute } from '@/app/api/campaigns/[id]/confirm/route'
 import { POST as cancelRoute } from '@/app/api/campaigns/[id]/cancel/route'
 import { GET as listRecipientsRoute } from '@/app/api/campaigns/[id]/recipients/route'
+import { POST as startRoute } from '@/app/api/campaigns/[id]/start/route'
+import { POST as pauseRoute } from '@/app/api/campaigns/[id]/pause/route'
+import { POST as resumeRoute } from '@/app/api/campaigns/[id]/resume/route'
+import { GET as statusRoute } from '@/app/api/campaigns/[id]/status/route'
 import {
   claimPendingRecipients,
   finalizeCampaign,
+  scheduleRecipientRetry,
 } from '@/lib/campaign-repo'
 
 // ---------------------------------------------------------------------------
@@ -450,6 +455,275 @@ describe('Integration: finalizeCampaign race guard', () => {
         [raceCampaignId],
       )
       expect(rows[0].status).toBe('completed_with_errors')
+    } finally {
+      client.release()
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Integration: Campaign automation state machine (migration 014)
+// Validates start/pause/resume/cancel transitions via API routes, plus
+// scheduleRecipientRetry backoff and claimPendingRecipients next_retry_at guard.
+// ---------------------------------------------------------------------------
+
+describe('Integration: Campaign automation flow', () => {
+  let autoCampaignId: string | null = null
+  let autoRecipientId: string | null = null
+
+  beforeAll(async () => {
+    if (!dbAvailable || !testKeyId) return
+    const client = await pool.connect()
+    try {
+      // Insert campaign directly in ready_to_send so we can test /start
+      const { rows } = await client.query<{ id: string }>(
+        `INSERT INTO campaigns
+           (workspace_id, name, status, total_count, created_by)
+         VALUES ($1, 'Automation Integration Test', 'ready_to_send', 1, $2)
+         RETURNING id`,
+        [TEST_WORKSPACE_ID, testKeyId],
+      )
+      autoCampaignId = rows[0].id
+
+      const { rows: recRows } = await client.query<{ id: string }>(
+        `INSERT INTO campaign_recipients
+           (campaign_id, cnpj, razao_social, telefone, status)
+         VALUES ($1, '33444555000103', 'AUTOMACAO LTDA', '11999990001', 'pending')
+         RETURNING id`,
+        [autoCampaignId],
+      )
+      autoRecipientId = recRows[0].id
+    } finally {
+      client.release()
+    }
+  })
+
+  afterAll(async () => {
+    if (!dbAvailable || !autoCampaignId) return
+    const client = await pool.connect()
+    try {
+      await client.query('DELETE FROM campaigns WHERE id = $1', [autoCampaignId])
+    } finally {
+      client.release()
+    }
+  })
+
+  it('POST /start transitions ready_to_send → sending and stores automation config', async () => {
+    if (!dbAvailable || !testRawKey || !autoCampaignId) return expect(true).toBe(true)
+
+    const res = await startRoute(
+      makePost(`/api/campaigns/${autoCampaignId}/start`, testRawKey, {
+        delay_seconds: 60,
+        jitter_max: 5,
+        max_per_hour: 20,
+        max_retries: 2,
+      }),
+      makeParams(autoCampaignId),
+    )
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.data.status).toBe('sending')
+    expect(body.data.automation_delay_seconds).toBe(60)
+    expect(body.data.automation_jitter_max).toBe(5)
+    expect(body.data.max_retries).toBe(2)
+    expect(body.data.next_send_at).toBeTruthy()
+  })
+
+  it('second POST /start returns 409 (campaign already sending)', async () => {
+    if (!dbAvailable || !testRawKey || !autoCampaignId) return expect(true).toBe(true)
+
+    const res = await startRoute(
+      makePost(`/api/campaigns/${autoCampaignId}/start`, testRawKey, {}),
+      makeParams(autoCampaignId),
+    )
+    expect(res.status).toBe(409)
+  })
+
+  it('POST /pause transitions sending → paused and sets paused_at', async () => {
+    if (!dbAvailable || !testRawKey || !autoCampaignId) return expect(true).toBe(true)
+
+    const res = await pauseRoute(
+      makePost(`/api/campaigns/${autoCampaignId}/pause`, testRawKey),
+      makeParams(autoCampaignId),
+    )
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.data.status).toBe('paused')
+    expect(body.data.paused_at).toBeTruthy()
+  })
+
+  it('POST /pause while paused returns 409', async () => {
+    if (!dbAvailable || !testRawKey || !autoCampaignId) return expect(true).toBe(true)
+
+    const res = await pauseRoute(
+      makePost(`/api/campaigns/${autoCampaignId}/pause`, testRawKey),
+      makeParams(autoCampaignId),
+    )
+    expect(res.status).toBe(409)
+  })
+
+  it('POST /resume transitions paused → sending and resets next_send_at', async () => {
+    if (!dbAvailable || !testRawKey || !autoCampaignId) return expect(true).toBe(true)
+
+    const res = await resumeRoute(
+      makePost(`/api/campaigns/${autoCampaignId}/resume`, testRawKey),
+      makeParams(autoCampaignId),
+    )
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.data.status).toBe('sending')
+    expect(body.data.next_send_at).toBeTruthy()
+  })
+
+  it('GET /status returns correct structure for a running campaign', async () => {
+    if (!dbAvailable || !testRawKey || !autoCampaignId) return expect(true).toBe(true)
+
+    const res = await statusRoute(
+      makeGet(`/api/campaigns/${autoCampaignId}/status`, testRawKey),
+      makeParams(autoCampaignId),
+    )
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.data.status).toBe('sending')
+    expect(body.data.total_count).toBe(1)
+    expect(body.data.is_terminal).toBe(false)
+    expect(body.data.automation.delay_seconds).toBe(60)
+    expect(typeof body.data.progress.pending).toBe('number')
+    expect(typeof body.data.progress.sent).toBe('number')
+  })
+
+  it('scheduleRecipientRetry schedules retry for first failure (retry_count → 1, pending)', async () => {
+    if (!dbAvailable || !autoRecipientId) return expect(true).toBe(true)
+
+    const client = await pool.connect()
+    try {
+      await client.query(
+        `UPDATE campaign_recipients
+         SET status = 'processing', processing_started_at = NOW()
+         WHERE id = $1`,
+        [autoRecipientId],
+      )
+      await scheduleRecipientRetry(client, autoRecipientId, 0, 2, 'transient error')
+
+      const { rows } = await client.query(
+        `SELECT status, retry_count, next_retry_at FROM campaign_recipients WHERE id = $1`,
+        [autoRecipientId],
+      )
+      expect(rows[0].status).toBe('pending')
+      expect(rows[0].retry_count).toBe(1)
+      expect(rows[0].next_retry_at).toBeTruthy()
+    } finally {
+      client.release()
+    }
+  })
+
+  it('scheduleRecipientRetry marks failed when max_retries reached', async () => {
+    if (!dbAvailable || !autoRecipientId) return expect(true).toBe(true)
+
+    const client = await pool.connect()
+    try {
+      await client.query(
+        `UPDATE campaign_recipients
+         SET status = 'processing', processing_started_at = NOW(), retry_count = 1
+         WHERE id = $1`,
+        [autoRecipientId],
+      )
+      // newRetryCount = 1 + 1 = 2 >= max_retries=2 → fail
+      await scheduleRecipientRetry(client, autoRecipientId, 1, 2, 'max retries reached')
+
+      const { rows } = await client.query(
+        `SELECT status, retry_count FROM campaign_recipients WHERE id = $1`,
+        [autoRecipientId],
+      )
+      expect(rows[0].status).toBe('failed')
+    } finally {
+      client.release()
+    }
+  })
+
+  it('POST /cancel from sending transitions to cancelled', async () => {
+    if (!dbAvailable || !testRawKey || !autoCampaignId) return expect(true).toBe(true)
+
+    const res = await cancelRoute(
+      makePost(`/api/campaigns/${autoCampaignId}/cancel`, testRawKey),
+      makeParams(autoCampaignId),
+    )
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.data.status).toBe('cancelled')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Integration: next_retry_at respected by claimPendingRecipients (migration 014)
+// ---------------------------------------------------------------------------
+
+describe('Integration: claimPendingRecipients respects next_retry_at', () => {
+  let retryCampaignId: string | null = null
+  let retryRecipientId: string | null = null
+
+  beforeAll(async () => {
+    if (!dbAvailable || !testKeyId) return
+    const client = await pool.connect()
+    try {
+      const { rows } = await client.query<{ id: string }>(
+        `INSERT INTO campaigns
+           (workspace_id, name, status, total_count, created_by)
+         VALUES ($1, 'Retry Guard Test', 'sending', 1, $2)
+         RETURNING id`,
+        [TEST_WORKSPACE_ID, testKeyId],
+      )
+      retryCampaignId = rows[0].id
+
+      // Recipient scheduled for retry 1 hour in the future — must NOT be claimed
+      const { rows: recRows } = await client.query<{ id: string }>(
+        `INSERT INTO campaign_recipients
+           (campaign_id, cnpj, razao_social, telefone, status, retry_count, next_retry_at)
+         VALUES ($1, '44555666000114', 'RETRY GUARD LTDA', '11999990002',
+                 'pending', 1, NOW() + INTERVAL '1 hour')
+         RETURNING id`,
+        [retryCampaignId],
+      )
+      retryRecipientId = recRows[0].id
+    } finally {
+      client.release()
+    }
+  })
+
+  afterAll(async () => {
+    if (!dbAvailable || !retryCampaignId) return
+    const client = await pool.connect()
+    try {
+      await client.query('DELETE FROM campaigns WHERE id = $1', [retryCampaignId])
+    } finally {
+      client.release()
+    }
+  })
+
+  it('does not claim a recipient whose next_retry_at is in the future', async () => {
+    if (!dbAvailable || !retryCampaignId) return expect(true).toBe(true)
+
+    const client = await pool.connect()
+    try {
+      const { recipients } = await claimPendingRecipients(client, retryCampaignId, 10)
+      expect(recipients).toHaveLength(0)
+    } finally {
+      client.release()
+    }
+  })
+
+  it('claims the recipient once next_retry_at has elapsed', async () => {
+    if (!dbAvailable || !retryCampaignId || !retryRecipientId) return expect(true).toBe(true)
+
+    const client = await pool.connect()
+    try {
+      await client.query(
+        `UPDATE campaign_recipients SET next_retry_at = NOW() - INTERVAL '1 second' WHERE id = $1`,
+        [retryRecipientId],
+      )
+      const { recipients } = await claimPendingRecipients(client, retryCampaignId, 10)
+      expect(recipients).toHaveLength(1)
+      expect(recipients[0].cnpj).toBe('44555666000114')
     } finally {
       client.release()
     }

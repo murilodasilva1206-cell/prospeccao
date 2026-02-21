@@ -1,8 +1,9 @@
-// POST /api/campaigns/:id/cancel — cancel a campaign
+// POST /api/campaigns/:id/resume — resume a paused campaign
 //
-// Allowed from: draft | awaiting_confirmation | awaiting_channel | awaiting_message
-//               | ready_to_send | sending | paused
-// Not allowed when: completed | completed_with_errors | cancelled
+// Transitions: paused → sending
+//
+// Resets next_send_at to NOW() so the Vercel Cron picks this campaign up
+// on its next tick (within 1 minute).
 
 import { NextRequest, NextResponse } from 'next/server'
 import pool from '@/lib/database'
@@ -10,7 +11,7 @@ import { logger } from '@/lib/logger'
 import { campaignLimiter } from '@/lib/rate-limit'
 import { getClientIp } from '@/lib/get-ip'
 import { requireWorkspaceAuth, authErrorResponse } from '@/lib/whatsapp/auth-middleware'
-import { findCampaignById, cancelCampaignIfAllowed, insertCampaignAudit } from '@/lib/campaign-repo'
+import { findCampaignById, resumeCampaign, insertCampaignAudit } from '@/lib/campaign-repo'
 import { z } from 'zod'
 
 const CampaignIdSchema = z.string().uuid()
@@ -20,7 +21,7 @@ type Params = { params: Promise<{ id: string }> }
 export async function POST(request: NextRequest, { params }: Params) {
   const requestId = crypto.randomUUID()
   const ip = getClientIp(request)
-  const log = logger.child({ requestId, route: 'POST /api/campaigns/:id/cancel', ip })
+  const log = logger.child({ requestId, route: 'POST /api/campaigns/:id/resume', ip })
 
   const rateLimit = await campaignLimiter.check(ip)
   if (!rateLimit.success) {
@@ -44,19 +45,24 @@ export async function POST(request: NextRequest, { params }: Params) {
       if (campaign.workspace_id !== auth.workspace_id) {
         return NextResponse.json({ error: 'Acesso negado' }, { status: 403 })
       }
-
-      // Atomic: UPDATE ... WHERE status IN (cancellable) — prevents race with cron finalizer
-      const updated = await cancelCampaignIfAllowed(client, campaignId)
-      if (!updated) {
+      if (campaign.status !== 'paused') {
         return NextResponse.json(
-          { error: `Campanha nao pode ser cancelada (status: ${campaign.status})` },
+          { error: `Campanha nao pode ser retomada (status: ${campaign.status})` },
           { status: 409 },
         )
       }
 
-      await insertCampaignAudit(client, campaignId, 'cancelled', auth.key_id)
+      const updated = await resumeCampaign(client, campaignId)
+      if (!updated) {
+        return NextResponse.json(
+          { error: 'Campanha foi modificada concorrentemente — tente novamente' },
+          { status: 409 },
+        )
+      }
 
-      log.info({ campaignId, previousStatus: campaign.status }, 'Campanha cancelada')
+      await insertCampaignAudit(client, campaignId, 'automation_resumed', auth.key_id)
+
+      log.info({ campaignId }, 'Campanha retomada')
       return NextResponse.json({ data: updated })
     } finally {
       client.release()
@@ -64,7 +70,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   } catch (err) {
     const res = authErrorResponse(err)
     if (res) return res
-    log.error({ err }, 'Erro ao cancelar campanha')
+    log.error({ err }, 'Erro ao retomar campanha')
     return NextResponse.json({ error: 'Erro interno do servidor' }, { status: 500 })
   }
 }

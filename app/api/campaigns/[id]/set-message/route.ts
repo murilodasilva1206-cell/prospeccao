@@ -99,7 +99,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       log.info({ campaignId, message_type: body.message_type }, 'Mensagem definida → ready_to_send')
       return NextResponse.json({
         data: updated,
-        next_step: 'Inicie o envio via POST /api/campaigns/:id/send',
+        next_step: 'Configure e inicie a automacao via POST /api/campaigns/:id/start',
       })
     } finally {
       client.release()
