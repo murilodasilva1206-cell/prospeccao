@@ -303,6 +303,185 @@ jobs:
             );
             CREATE INDEX IF NOT EXISTS idx_audit_log_workspace
               ON audit_log(workspace_id, created_at DESC);
+
+            -- Migration 007: LGPD retention markers
+            COMMENT ON TABLE messages IS
+              'LGPD Art. 15 — dados de mensagens retidos por 365 dias.';
+            COMMENT ON TABLE audit_log IS
+              'LGPD Art. 37 — registros de operações retidos por 730 dias.';
+            CREATE INDEX IF NOT EXISTS idx_audit_log_retention ON audit_log(created_at);
+
+            -- Migration 008: campaigns
+            CREATE TABLE IF NOT EXISTS campaigns (
+              id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              workspace_id        TEXT NOT NULL,
+              name                TEXT,
+              status              TEXT NOT NULL DEFAULT 'draft'
+                                    CHECK (status IN (
+                                      'draft','awaiting_confirmation','awaiting_channel',
+                                      'awaiting_message','ready_to_send','sending','paused',
+                                      'completed','completed_with_errors','cancelled')),
+              channel_id          UUID REFERENCES whatsapp_channels(id) ON DELETE SET NULL,
+              message_type        TEXT CHECK (message_type IN ('template','text')),
+              message_content     JSONB,
+              search_filters      JSONB,
+              total_count         INT NOT NULL DEFAULT 0 CHECK (total_count >= 0),
+              sent_count          INT NOT NULL DEFAULT 0 CHECK (sent_count >= 0),
+              failed_count        INT NOT NULL DEFAULT 0 CHECK (failed_count >= 0),
+              confirmation_token  TEXT,
+              created_by          TEXT NOT NULL,
+              automation_delay_seconds       INTEGER NOT NULL DEFAULT 120
+                CHECK (automation_delay_seconds >= 10 AND automation_delay_seconds <= 86400),
+              automation_jitter_max          INTEGER NOT NULL DEFAULT 20
+                CHECK (automation_jitter_max >= 0 AND automation_jitter_max <= 300),
+              automation_max_per_hour        INTEGER NOT NULL DEFAULT 30
+                CHECK (automation_max_per_hour >= 1 AND automation_max_per_hour <= 500),
+              automation_working_hours_start SMALLINT
+                CHECK (automation_working_hours_start BETWEEN 0 AND 23),
+              automation_working_hours_end   SMALLINT
+                CHECK (automation_working_hours_end   BETWEEN 0 AND 23),
+              max_retries                    INTEGER NOT NULL DEFAULT 3
+                CHECK (max_retries >= 0 AND max_retries <= 10),
+              next_send_at                   TIMESTAMPTZ,
+              paused_at                      TIMESTAMPTZ,
+              created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_campaigns_workspace
+              ON campaigns(workspace_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_campaigns_active
+              ON campaigns(workspace_id, status)
+              WHERE status NOT IN ('completed','completed_with_errors','cancelled');
+            CREATE INDEX IF NOT EXISTS idx_campaigns_sendable
+              ON campaigns(next_send_at, status) WHERE status = 'sending';
+            DROP TRIGGER IF EXISTS trg_campaigns_updated_at ON campaigns;
+            CREATE TRIGGER trg_campaigns_updated_at
+              BEFORE UPDATE ON campaigns
+              FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+            CREATE TABLE IF NOT EXISTS campaign_recipients (
+              id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              campaign_id          UUID NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+              cnpj                 TEXT NOT NULL,
+              razao_social         TEXT,
+              nome_fantasia        TEXT,
+              telefone             TEXT,
+              email                TEXT,
+              municipio            TEXT,
+              uf                   TEXT,
+              status               TEXT NOT NULL DEFAULT 'pending'
+                                     CHECK (status IN ('pending','processing','sent','failed','skipped')),
+              provider_message_id  TEXT,
+              error_message        TEXT,
+              sent_at              TIMESTAMPTZ,
+              retry_count          INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+              next_retry_at        TIMESTAMPTZ,
+              processing_started_at TIMESTAMPTZ,
+              created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_campaign_recipients_campaign
+              ON campaign_recipients(campaign_id, status);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_campaign_recipients_unique
+              ON campaign_recipients(campaign_id, cnpj);
+            CREATE INDEX IF NOT EXISTS idx_campaign_recipients_stuck
+              ON campaign_recipients(campaign_id, processing_started_at)
+              WHERE status = 'processing';
+            CREATE INDEX IF NOT EXISTS idx_campaign_recipients_retry
+              ON campaign_recipients(campaign_id, next_retry_at)
+              WHERE status = 'pending' AND next_retry_at IS NOT NULL;
+
+            CREATE TABLE IF NOT EXISTS campaign_audit_log (
+              id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              campaign_id  UUID NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+              action       TEXT NOT NULL,
+              performed_by TEXT NOT NULL,
+              metadata     JSONB,
+              created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_campaign_audit_campaign
+              ON campaign_audit_log(campaign_id, created_at DESC);
+
+            -- Migration 011: CNAE dictionary
+            CREATE TABLE IF NOT EXISTS cnae_dictionary (
+              codigo    TEXT PRIMARY KEY,
+              descricao TEXT NOT NULL,
+              sinonimos TEXT[] NOT NULL DEFAULT '{}'
+            );
+            CREATE INDEX IF NOT EXISTS idx_cnae_dictionary_sinonimos
+              ON cnae_dictionary USING GIN (sinonimos);
+            INSERT INTO cnae_dictionary (codigo, descricao, sinonimos) VALUES
+              ('8630-5/04','Atividades Odontologicas',ARRAY['clinicas odontologicas','dentistas','odontologia']),
+              ('8630-5/01','Atividades de Atencao Ambulatorial Executadas por Medicos',ARRAY['clinicas medicas','medicos']),
+              ('8610-1/01','Atividades de Atencao a Saude Humana',ARRAY['hospitais']),
+              ('5611-2/01','Restaurantes e Similares',ARRAY['restaurantes','pizzarias','delivery']),
+              ('6201-5/01','Desenvolvimento de Programas de Computador',ARRAY['software','startups'])
+            ON CONFLICT (codigo) DO UPDATE SET descricao = EXCLUDED.descricao, sinonimos = EXCLUDED.sinonimos;
+
+            -- Migration 012: users
+            CREATE TABLE IF NOT EXISTS users (
+              id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              workspace_id  TEXT NOT NULL,
+              email         TEXT NOT NULL UNIQUE,
+              password_hash TEXT NOT NULL,
+              created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
+            -- Migration 013: web_sessions
+            CREATE TABLE IF NOT EXISTS web_sessions (
+              id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              user_id             UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              workspace_id        TEXT NOT NULL,
+              session_token_hash  TEXT NOT NULL UNIQUE,
+              expires_at          TIMESTAMPTZ NOT NULL,
+              created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_web_sessions_expires_at ON web_sessions(expires_at);
+
+            -- Migration 015: llm_profiles
+            CREATE TABLE IF NOT EXISTS llm_profiles (
+              id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+              workspace_id      TEXT        NOT NULL,
+              name              TEXT        NOT NULL,
+              provider          TEXT        NOT NULL
+                CHECK (provider IN ('openrouter','openai','anthropic','google')),
+              api_key_encrypted TEXT        NOT NULL,
+              model             TEXT        NOT NULL,
+              base_url          TEXT,
+              is_default        BOOLEAN     NOT NULL DEFAULT false,
+              created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS llm_profiles_workspace_name_idx
+              ON llm_profiles(workspace_id, name);
+            CREATE UNIQUE INDEX IF NOT EXISTS llm_profiles_workspace_default_idx
+              ON llm_profiles(workspace_id) WHERE is_default = true;
+            CREATE INDEX IF NOT EXISTS llm_profiles_workspace_id_idx
+              ON llm_profiles(workspace_id);
+            CREATE OR REPLACE FUNCTION set_llm_profiles_updated_at()
+            RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN NEW.updated_at = NOW(); RETURN NEW; END;
+            $$;
+            DROP TRIGGER IF EXISTS trg_llm_profiles_updated_at ON llm_profiles;
+            CREATE TRIGGER trg_llm_profiles_updated_at
+              BEFORE UPDATE ON llm_profiles
+              FOR EACH ROW EXECUTE FUNCTION set_llm_profiles_updated_at();
+
+            -- Migration 016: agent_served_leads
+            -- Migration 017: actor_id (combined into one CREATE to avoid ALTER complexity)
+            CREATE TABLE IF NOT EXISTS agent_served_leads (
+              id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+              workspace_id      TEXT        NOT NULL,
+              actor_id          TEXT        NOT NULL DEFAULT '',
+              query_fingerprint TEXT        NOT NULL,
+              cnpj              TEXT        NOT NULL,
+              served_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              UNIQUE (workspace_id, actor_id, query_fingerprint, cnpj)
+            );
+            CREATE INDEX IF NOT EXISTS agent_served_leads_lookup_idx
+              ON agent_served_leads(workspace_id, actor_id, query_fingerprint, served_at);
+            CREATE INDEX IF NOT EXISTS agent_served_leads_served_at_idx
+              ON agent_served_leads(served_at);
           SQL
       - name: Run integration + contract tests
         run: npm run test:integration

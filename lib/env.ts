@@ -6,12 +6,15 @@ const EnvSchema = z.object({
   DB_NAME: z.string().min(1, 'DB_NAME is required'),
   DB_USER: z.string().min(1, 'DB_USER is required'),
   DB_PASSWORD: z.string().min(8, 'DB_PASSWORD must be at least 8 characters'),
+  // Optional in production — each workspace configures its own LLM profile.
+  // In development, a global fallback key can be set here for convenience.
+  // The runtime gate (409 LLM_PROFILE_REQUIRED) handles the production case.
   OPENROUTER_API_KEY: z
     .string()
-    .min(1, 'OPENROUTER_API_KEY is required')
-    .refine((v) => v.startsWith('sk-or-'), {
-      message: 'OPENROUTER_API_KEY must start with sk-or-',
-    }),
+    .refine((v) => !v || v.startsWith('sk-or-'), {
+      message: 'OPENROUTER_API_KEY must start with sk-or- (when set)',
+    })
+    .default(''),
   OPENROUTER_MODEL: z.string().min(1).default('anthropic/claude-3.5-sonnet'),
   NODE_ENV: z
     .enum(['development', 'production', 'test'])

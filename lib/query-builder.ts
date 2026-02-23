@@ -10,6 +10,8 @@ interface QueryResult {
 // The only fields interpolated directly into SQL text are `orderBy` and `orderDir`,
 // which are validated against a z.enum() whitelist in the schema — they can
 // never be arbitrary user strings. SQL identifiers cannot be parameterized.
+// 'contato_priority' is a virtual sentinel handled as a CASE expression here,
+// never passed as a raw column name into SQL.
 // ---------------------------------------------------------------------------
 
 // Table: estabelecimentos (Receita Federal public CNPJ registry)
@@ -80,8 +82,14 @@ export function buildContactsQuery(filters: BuscaQuery): QueryResult {
   const where =
     conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
-  // orderBy and orderDir are z.enum() validated — safe to interpolate
-  const orderClause = `ORDER BY ${filters.orderBy} ${filters.orderDir}`
+  // orderBy is z.enum() validated — safe to interpolate.
+  // 'contato_priority' uses a CASE expression (not a column name) so it never
+  // reaches the database as an arbitrary identifier.
+  const orderExpression =
+    filters.orderBy === 'contato_priority'
+      ? `(CASE WHEN (telefone1 IS NOT NULL AND telefone1 <> '') OR (telefone2 IS NOT NULL AND telefone2 <> '') THEN 0 ELSE 1 END) ASC, (CASE WHEN correio_eletronico IS NOT NULL AND correio_eletronico <> '' THEN 0 ELSE 1 END) ASC, razao_social ${filters.orderDir}`
+      : `${filters.orderBy} ${filters.orderDir}`
+  const orderClause = `ORDER BY ${orderExpression}`
 
   const offset = (filters.page - 1) * filters.limit
   const paramIndex = values.length + 1

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect, beforeAll, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { server } from '../mocks/server'
 import { POST } from '@/app/api/agente/route'
@@ -8,8 +8,30 @@ import pool from '@/lib/database'
 // ---------------------------------------------------------------------------
 // Integration tests for /api/agente.
 // AI calls are mocked via MSW (no real OpenRouter needed).
+// Auth + LLM profile are mocked — no API key or DB workspace setup needed.
 // DB calls (for search results) require PostgreSQL — tests skip when unavailable.
 // ---------------------------------------------------------------------------
+
+vi.mock('@/lib/whatsapp/auth-middleware', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/lib/whatsapp/auth-middleware')>()
+  return {
+    ...original,
+    requireWorkspaceAuth: vi.fn().mockResolvedValue({
+      workspace_id:   'ws-integration-test',
+      actor:          'api_key:test-bot',
+      key_id:         'key-uuid-test',
+      dedup_actor_id: 'api_key:key-uuid-test',
+    }),
+  }
+})
+
+vi.mock('@/lib/llm-profile-repo', () => ({
+  getDefaultProfile: vi.fn().mockResolvedValue({
+    apiKey:   'sk-or-test-key',
+    model:    'test-model',
+    provider: 'openrouter',
+  }),
+}))
 
 let dbAvailable = false
 
@@ -85,9 +107,9 @@ describe('POST /api/agente', () => {
   })
 
   it('blocks prompt injection attempts without calling AI', async (ctx) => {
-    // Auth now runs before injection check so a DB connection is needed.
+    // route.ts calls pool.connect() before requireWorkspaceAuth, so DB must be reachable
     if (!dbAvailable) ctx.skip()
-    // Override default handler to track if OpenRouter was called
+    // Auth is mocked — injection check fires after auth, before AI
     let openRouterCalled = false
     server.use(
       http.post('https://openrouter.ai/api/v1/chat/completions', () => {
@@ -100,9 +122,7 @@ describe('POST /api/agente', () => {
     const res = await POST(req)
     const body = await res.json()
 
-    // Must be blocked before AI — 200/action=reject (injection blocked), 401 (auth
-    // failed before injection check), or 429 (rate limited). OpenRouter must not fire.
-    expect([200, 401, 429]).toContain(res.status)
+    expect([200, 429]).toContain(res.status)
     if (res.status === 200) {
       expect(body.action).toBe('reject')
     }
@@ -110,9 +130,8 @@ describe('POST /api/agente', () => {
   })
 
   it('returns 429 when rate limit is exceeded', async (ctx) => {
-    // Skip when DB is unavailable: the 10 non-rate-limited requests trigger DB
-    // queries that generate ECONNREFUSED noise and obscure real failures.
-    // Rate-limit enforcement is also covered in __tests__/security/dos.test.ts.
+    // First requests before rate-limit fires reach AI+DB. Skip when DB unavailable
+    // to avoid ECONNREFUSED noise. Rate-limit coverage also in __tests__/security/dos.test.ts.
     if (!dbAvailable) ctx.skip()
     const ip = '99.0.0.1'
     const requests = Array.from({ length: 11 }, () =>
@@ -124,34 +143,34 @@ describe('POST /api/agente', () => {
   })
 
   it('returns 503 when circuit breaker is OPEN', async (ctx) => {
-    // Auth is required to reach the AI call — skip when DB is unavailable
+    // route.ts calls pool.connect() before requireWorkspaceAuth, so DB must be reachable
     if (!dbAvailable) ctx.skip()
-    // Force OpenRouter to fail repeatedly
+    // Auth is mocked; AI fails via MSW, opening the circuit
     server.use(
       http.post('https://openrouter.ai/api/v1/chat/completions', () => {
         return HttpResponse.error()
       }),
     )
 
-    // Reset circuit breaker for this test
-    const { openRouterBreaker } = await import('@/lib/circuit-breaker')
-    openRouterBreaker._reset()
+    const { _resetBreakerForTest } = await import('@/lib/ai-client')
+    _resetBreakerForTest('openrouter')
 
     const ip = '192.168.0.99'
-    // Exhaust failure threshold (5) — use unique IP to avoid rate limit
+    // Exhaust failure threshold (5) — unique IP avoids hitting the rate limiter
     for (let i = 0; i < 6; i++) {
       await POST(makeRequest({ message: 'Find contacts' }, ip))
     }
 
-    // By now circuit should be OPEN — next request should 503
+    // Circuit is now OPEN — next request returns 503
     const res = await POST(makeRequest({ message: 'Find contacts' }, ip))
-    // Either 503 (circuit open) or 429 (rate limited) — both are valid protection responses
+    // 503 (circuit open) or 429 (rate limited) — both are valid protection responses
     expect([429, 503]).toContain(res.status)
   })
 
   it('handles OpenRouter returning invalid JSON gracefully (fallback)', async (ctx) => {
-    // Auth is required to reach the AI call — skip when DB is unavailable
+    // route.ts calls pool.connect() before requireWorkspaceAuth, so DB must be reachable
     if (!dbAvailable) ctx.skip()
+    // Auth is mocked; parse fallback returns clarify action
     server.use(
       http.post('https://openrouter.ai/api/v1/chat/completions', () => {
         return HttpResponse.json({
@@ -160,8 +179,8 @@ describe('POST /api/agente', () => {
       }),
     )
 
-    const { openRouterBreaker } = await import('@/lib/circuit-breaker')
-    openRouterBreaker._reset()
+    const { _resetBreakerForTest } = await import('@/lib/ai-client')
+    _resetBreakerForTest('openrouter')
 
     const req = makeRequest({ message: 'Find CTOs' }, '10.0.0.50')
     const res = await POST(req)

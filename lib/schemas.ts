@@ -46,10 +46,11 @@ export const BuscaQuerySchema = PaginationSchema.extend({
   tem_telefone: QueryBoolean,
   tem_email: QueryBoolean,
 
-  // Whitelist — prevents ORDER BY injection via arbitrary column names
+  // Whitelist — prevents ORDER BY injection via arbitrary column names.
+  // 'contato_priority' is a virtual sort handled in query-builder (not a real column).
   orderBy: z
-    .enum(['razao_social', 'municipio', 'cnpj_completo'])
-    .default('razao_social'),
+    .enum(['razao_social', 'municipio', 'cnpj_completo', 'contato_priority'])
+    .default('contato_priority'),
   orderDir: z.enum(['asc', 'desc']).default('asc'),
 })
 
@@ -79,8 +80,8 @@ export const ExportQuerySchema = z.object({
   tem_telefone: QueryBoolean,
   tem_email: QueryBoolean,
   orderBy: z
-    .enum(['razao_social', 'municipio', 'cnpj_completo'])
-    .default('razao_social'),
+    .enum(['razao_social', 'municipio', 'cnpj_completo', 'contato_priority'])
+    .default('contato_priority'),
   orderDir: z.enum(['asc', 'desc']).default('asc'),
   // Hard cap: never export more than 5000 rows in a single request
   maxRows: z.coerce.number().int().min(1).max(5000).default(1000),

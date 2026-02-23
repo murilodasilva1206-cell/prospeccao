@@ -12,12 +12,13 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuth } from '@/app/components/AuthProvider'
 import AgentChat from '@/app/components/AgentChat'
-import { LogOut, MessageSquare, Plug, Key, Loader2 } from 'lucide-react'
+import { LogOut, MessageSquare, Plug, Key, Bot, Loader2 } from 'lucide-react'
 
 const NAV_LINKS = [
   { href: '/whatsapp/inbox', label: 'Inbox', icon: MessageSquare },
   { href: '/whatsapp/canais', label: 'Canais', icon: Plug },
   { href: '/whatsapp/chaves', label: 'Chaves', icon: Key },
+  { href: '/whatsapp/llm', label: 'Integrações IA', icon: Bot },
 ]
 
 export default function WhatsAppLayout({ children }: { children: React.ReactNode }) {

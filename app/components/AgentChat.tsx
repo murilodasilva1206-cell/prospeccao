@@ -47,6 +47,7 @@ interface ChatMessage {
   filters?: Record<string, unknown>
   hasCta?: boolean
   nicho?: string
+  link?: string
 }
 
 interface AgentResponse {
@@ -55,6 +56,10 @@ interface AgentResponse {
   data?: PublicEmpresa[]
   meta?: { total: number; page: number; limit: number; pages: number }
   filters?: Record<string, unknown>
+  // Server-generated narration (ai-narrator.ts); falls back to client-side when absent
+  headline?: string
+  subtitle?: string
+  hasCta?: boolean
 }
 
 interface PendingCampaign {
@@ -70,6 +75,15 @@ interface PendingCampaign {
 
 function genId(): string {
   return Math.random().toString(36).slice(2)
+}
+
+const HTTP_STATUS_MESSAGES: Record<number, string> = {
+  401: 'Sessão expirada. Faça login novamente.',
+  403: 'Sem permissão para esta busca.',
+  409: 'Nenhum provedor de IA configurado.',
+  429: 'Muitas buscas em pouco tempo. Aguarde alguns segundos.',
+  500: 'Erro interno do servidor. Tente novamente.',
+  503: 'Serviço de IA temporariamente indisponível. Tente novamente.',
 }
 
 // ---------------------------------------------------------------------------
@@ -123,16 +137,44 @@ export default function AgentChat() {
         body: JSON.stringify({ message: text }),
       })
 
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({})) as { error?: string }
+        const friendlyMsg =
+          HTTP_STATUS_MESSAGES[res.status] ??
+          errBody.error ??
+          `Erro ${res.status}. Tente novamente.`
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: genId(),
+            role: 'system',
+            text: friendlyMsg,
+            ...(res.status === 409 && { link: '/whatsapp/llm' }),
+          },
+        ])
+        return
+      }
+
       const data: AgentResponse = await res.json()
 
       if (data.action === 'search' && data.data && data.meta) {
         const filters = (data.filters ?? {}) as Parameters<typeof humanizeSearchResult>[0]['filters']
-        const { headline, subtitle, hasCta } = humanizeSearchResult({
-          total: data.meta.total,
-          count: data.data.length,
-          filters,
-          data: data.data,
-        })
+
+        // Prefer server-generated narration (Narrator LLM); fall back to client-side
+        let headline = data.headline
+        let subtitle = data.subtitle
+        let hasCta = data.hasCta
+        if (!headline || !subtitle) {
+          const fallback = humanizeSearchResult({
+            total: data.meta.total,
+            count: data.data.length,
+            filters,
+            data: data.data,
+          })
+          headline = headline ?? fallback.headline
+          subtitle = subtitle ?? fallback.subtitle
+          hasCta = hasCta ?? fallback.hasCta
+        }
 
         const agentMsg: ChatMessage = {
           id: genId(),
@@ -142,7 +184,7 @@ export default function AgentChat() {
           results: data.data,
           resultsTotal: data.meta.total,
           filters: data.filters,
-          hasCta,
+          hasCta: hasCta ?? false,
           nicho: typeof filters.nicho === 'string' ? filters.nicho : undefined,
         }
         setMessages((prev) => [...prev, agentMsg])
@@ -203,8 +245,12 @@ export default function AgentChat() {
         })
 
         if (!res.ok) {
-          const err = await res.json().catch(() => ({}))
-          throw new Error((err as { error?: string }).error ?? `HTTP ${res.status}`)
+          const err = await res.json().catch(() => ({})) as { error?: string }
+          const friendlyMsg =
+            HTTP_STATUS_MESSAGES[res.status] ??
+            err.error ??
+            `Erro ${res.status}. Tente novamente.`
+          throw new Error(friendlyMsg)
         }
 
         const data = await res.json() as {
@@ -373,6 +419,11 @@ export default function AgentChat() {
                 {msg.role === 'system' && (
                   <div className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-600">
                     {msg.text}
+                    {msg.link && (
+                      <a href={msg.link} className="ml-1 font-medium underline">
+                        Configurar agora →
+                      </a>
+                    )}
                   </div>
                 )}
               </div>

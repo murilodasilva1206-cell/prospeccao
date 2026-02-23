@@ -181,9 +181,10 @@ function makeParams(id: string) {
 
 function mockAuth(workspaceId = 'ws-a', keyId = 'key-1') {
   vi.mocked(requireWorkspaceAuth).mockResolvedValue({
-    workspace_id: workspaceId,
-    actor: `api_key:test`,
-    key_id: keyId,
+    workspace_id:   workspaceId,
+    actor:          `api_key:test`,
+    key_id:         keyId,
+    dedup_actor_id: `api_key:${keyId}`,
   })
 }
 

@@ -53,8 +53,11 @@ function stripDefaultPort(host: string): string {
 
 export interface AuthContext {
   workspace_id: string
-  actor: string   // 'session:<user_id>' or 'api_key:<label>' — used in audit logs
-  key_id: string  // session UUID or api_key UUID
+  actor: string          // 'session:<user_id>' or 'api_key:<label>' — used in audit logs
+  key_id: string         // session UUID or api_key UUID
+  dedup_actor_id: string // stable per-user ID for lead deduplication:
+                         //   session  → 'session:<user_id>'  (user UUID, stable across logins)
+                         //   api_key  → 'api_key:<key_id>'   (key UUID, stable; label can change)
 }
 
 /**
@@ -115,9 +118,10 @@ export async function requireWorkspaceAuth(
       }
 
       return {
-        workspace_id: session.workspace_id,
-        actor: `session:${session.user_id}`,
-        key_id: session.session_id,
+        workspace_id:   session.workspace_id,
+        actor:          `session:${session.user_id}`,
+        key_id:         session.session_id,
+        dedup_actor_id: `session:${session.user_id}`,  // user_id is stable across sessions
       }
     }
     // Cookie present but invalid/expired. If no Bearer token is available either,
@@ -154,9 +158,10 @@ export async function requireWorkspaceAuth(
   }
 
   return {
-    workspace_id: validated.workspace_id,
-    actor: `api_key:${validated.label}`,
-    key_id: validated.key_id,
+    workspace_id:   validated.workspace_id,
+    actor:          `api_key:${validated.label}`,
+    key_id:         validated.key_id,
+    dedup_actor_id: `api_key:${validated.key_id}`,  // key_id UUID is stable; label can be renamed
   }
 }
 

@@ -28,7 +28,7 @@ describe('BuscaQuerySchema', () => {
     const result = BuscaQuerySchema.parse({})
     expect(result.page).toBe(1)
     expect(result.limit).toBe(20)
-    expect(result.orderBy).toBe('razao_social')
+    expect(result.orderBy).toBe('contato_priority')
     expect(result.orderDir).toBe('asc')
     expect(result.situacao_cadastral).toBe('ATIVA')
   })

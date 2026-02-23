@@ -99,7 +99,7 @@ import { GET as listKeysRoute } from '@/app/api/whatsapp/keys/route'
 // Helpers
 // ---------------------------------------------------------------------------
 
-const WORKSPACE = { workspace_id: 'ws-test', actor: 'session:user-1', key_id: 'key-1' }
+const WORKSPACE = { workspace_id: 'ws-test', actor: 'session:user-1', key_id: 'key-1', dedup_actor_id: 'session:user-1' }
 
 function mockPoolClient() {
   const client = {
