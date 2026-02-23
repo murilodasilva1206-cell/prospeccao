@@ -1,0 +1,126 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Security gate — must pass before any deploy is triggered
+  # ---------------------------------------------------------------------------
+  pre-deploy-security-gate:
+    name: Pre-deploy Security Gate
+    runs-on: ubuntu-latest
+    env:
+      DB_HOST: localhost
+      DB_PORT: '5432'
+      DB_NAME: prospeccao_test
+      DB_USER: test_user
+      DB_PASSWORD: testpassword_gate
+      OPENROUTER_API_KEY: sk-or-test-placeholder-gate
+      OPENROUTER_MODEL: anthropic/claude-3.5-sonnet
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+
+      - name: Fail deploy on CRITICAL vulnerabilities
+        run: npm audit --audit-level=critical
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      - name: Unit + security tests must pass
+        run: npm run test -- --exclude='**/__tests__/integration/**'
+
+      - name: Build must succeed
+        run: npm run build
+        env:
+          # Build requires valid env; use placeholders for CI build check
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: prospeccao
+          DB_USER: app
+          DB_PASSWORD: placeholder12345
+          OPENROUTER_API_KEY: sk-or-placeholder-build-check-only
+          OPENROUTER_MODEL: anthropic/claude-3.5-sonnet
+          NODE_ENV: production
+
+  # ---------------------------------------------------------------------------
+  # Deploy (add your hosting provider's action here)
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy to Production
+    needs: pre-deploy-security-gate
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      # Example: Vercel
+      # - name: Deploy to Vercel
+      #   uses: amondnet/vercel-action@v25
+      #   with:
+      #     vercel-token: ${{ secrets.VERCEL_TOKEN }}
+      #     vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+      #     vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+      #     vercel-args: '--prod'
+
+      # Example: Railway
+      # - uses: bervProject/railway-deploy@main
+      #   with:
+      #     railway_token: ${{ secrets.RAILWAY_TOKEN }}
+      #     service: prospeccao
+
+      - name: Deploy step placeholder
+        run: echo "Add your deploy step here (Vercel, Railway, Render, Fly.io, etc.)"
+
+  # ---------------------------------------------------------------------------
+  # Post-deploy smoke + security header checks
+  # ---------------------------------------------------------------------------
+  post-deploy-verification:
+    name: Post-deploy Smoke + Security Check
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Health check
+        run: |
+          DEPLOY_URL="${{ secrets.DEPLOY_URL }}"
+          if [ -z "$DEPLOY_URL" ]; then
+            echo "DEPLOY_URL secret not set — skipping post-deploy check"
+            exit 0
+          fi
+          curl -f "${DEPLOY_URL}/api/busca" || (echo "Health check failed!" && exit 1)
+
+      - name: Verify security headers
+        run: |
+          DEPLOY_URL="${{ secrets.DEPLOY_URL }}"
+          if [ -z "$DEPLOY_URL" ]; then
+            echo "DEPLOY_URL secret not set — skipping header check"
+            exit 0
+          fi
+          HEADERS=$(curl -sI "${DEPLOY_URL}")
+          echo "$HEADERS" | grep -i "x-content-type-options: nosniff" || \
+            (echo "MISSING: X-Content-Type-Options" && exit 1)
+          echo "$HEADERS" | grep -i "x-frame-options: DENY" || \
+            (echo "MISSING: X-Frame-Options" && exit 1)
+          echo "$HEADERS" | grep -i "strict-transport-security" || \
+            (echo "MISSING: Strict-Transport-Security (HSTS)" && exit 1)
+          echo "$HEADERS" | grep -i "referrer-policy" || \
+            (echo "MISSING: Referrer-Policy" && exit 1)
+          echo "All required security headers present ✓"
+
+      - name: Verify X-Powered-By is absent (information disclosure)
+        run: |
+          DEPLOY_URL="${{ secrets.DEPLOY_URL }}"
+          if [ -z "$DEPLOY_URL" ]; then exit 0; fi
+          HEADERS=$(curl -sI "${DEPLOY_URL}")
+          if echo "$HEADERS" | grep -qi "x-powered-by"; then
+            echo "FAIL: X-Powered-By header is present — remove it!"
+            exit 1
+          fi
+          echo "X-Powered-By absent ✓"
