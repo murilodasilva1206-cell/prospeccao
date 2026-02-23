@@ -1,0 +1,22 @@
+{
+  "entry": [{
+    "changes": [{
+      "value": {
+        "messaging_product": "whatsapp",
+        "metadata": { "display_phone_number": "15551234567", "phone_number_id": "109876543210" },
+        "messages": [{
+          "id": "wamid.IMAGE001",
+          "from": "5511999990001",
+          "timestamp": "1700000100",
+          "type": "image",
+          "image": {
+            "id": "img-media-id-001",
+            "mime_type": "image/jpeg",
+            "sha256": "abcdef1234567890",
+            "caption": "Olha esta foto!"
+          }
+        }]
+      }
+    }]
+  }]
+}

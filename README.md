@@ -6,7 +6,7 @@ API de busca inteligente de empresas no cadastro publico CNPJ (Receita Federal d
 
 - **Next.js 16** (App Router) + **TypeScript 5**
 - **PostgreSQL** via `pg` — tabela `estabelecimentos` (dados publicos CNPJ)
-- **OpenRouter** (Claude) — agente de linguagem natural
+- **Perfis LLM por workspace** (OpenRouter, OpenAI, Anthropic, Google) — agente de linguagem natural
 - **Zod** para validacao de entrada/saida
 - **Vitest** + **MSW** para testes
 
@@ -90,6 +90,7 @@ cnpj, razaoSocial, nomeFantasia, uf, municipio, cnaePrincipal, situacao, telefon
 ```
 
 **Protecao:** celulas iniciadas com `=+-@` recebem prefixo `\t` (anti-formula CSV injection).
+**Nicho guard:** se `nicho` for informado e nao puder ser resolvido para CNAE, retorna 400 em vez de exportar a tabela inteira sem filtro de setor.
 **Rate limit:** 5 req/min por IP.
 
 ---
@@ -115,8 +116,12 @@ Agente de linguagem natural. Interpreta uma mensagem e executa a busca.
 ```
 
 **Acoes possiveis:** `search`, `export`, `clarify`, `reject`.
+- `clarify` e `reject` incluem obrigatoriamente um campo `message` com explicacao.
+- Quando `nicho` nao pode ser mapeado para CNAE, retorna `action: clarify` em vez de fazer scan da tabela inteira.
+
 **Rate limit:** 10 req/min por IP.
 **Protecao:** pre-screen de prompt injection (regex) + circuit breaker (5 falhas → OPEN, 30s).
+**LLM:** usa o perfil padrao do workspace (tabela `llm_profiles`); configure em `/whatsapp/llm`.
 
 ---
 
@@ -139,12 +144,135 @@ OPENROUTER_MODEL=anthropic/claude-3.5-sonnet
 # Rate limiting distribuido
 UPSTASH_REDIS_REST_URL=https://...
 UPSTASH_REDIS_REST_TOKEN=...
+
+# Criptografia de credenciais WhatsApp em repouso (AES-256-GCM)
+# Gere com: openssl rand -hex 32
+CREDENTIALS_ENCRYPTION_KEY=<64 caracteres hex>
+
+# Armazenamento de midia (S3 ou compativel — ex: Cloudflare R2)
+# Deixe false para iniciar sem S3; rotas de midia retornam 503 controlado.
+MEDIA_STORAGE_ENABLED=false
+
+# Obrigatorio somente quando MEDIA_STORAGE_ENABLED=true:
+S3_BUCKET=<nome-do-bucket>
+S3_ACCESS_KEY_ID=<access-key-id>
+S3_SECRET_ACCESS_KEY=<secret-access-key>
+S3_REGION=<regiao>          # ex: us-east-1
+
+# Opcional — endpoint customizado para R2 ou outro S3-compativel:
+# S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
 ```
 
 > **Atencao em producao:** `UPSTASH_REDIS_REST_URL` e `UPSTASH_REDIS_REST_TOKEN` sao **obrigatorios** em
 > qualquer ambiente multi-instancia (Vercel, containers horizontalmente escalados).
 > Sem eles, cada instancia mantem contadores proprios — o rate limit nao e aplicado de forma distribuida.
 > Em producao, se o Upstash ficar indisponivel, a API falha fechada (retorna 429) em vez de liberar sem limite.
+
+---
+
+## Auth
+
+O sistema suporta dois modelos de autenticacao:
+
+### 1. Sessao web (operadores humanos)
+
+```
+POST /api/auth/login   { email, password } → cookie HttpOnly `session` (8h, SameSite=Strict)
+POST /api/auth/logout  → apaga cookie
+GET  /api/auth/me      → { user_id, email, workspace_id }
+POST /api/auth/register → bootstrap (so funciona quando nenhum usuario existe OU quando SETUP_SECRET esta correto)
+```
+
+Rotas de pagina `/whatsapp/*` sao protegidas por `proxy.ts` (Next.js middleware):
+redirecionam para `/login` se o cookie `session` estiver ausente.
+
+Credenciais de desenvolvimento (inseridas por `seed_dev.sql`):
+```
+email:    dev@prospeccao.local
+password: devpassword
+```
+
+### 2. API key de workspace (integracoes externas)
+
+Todas as rotas `/api/whatsapp/*` aceitam tambem autenticacao via API key.
+
+#### Bootstrap da primeira chave
+
+```bash
+node --env-file=.env.local scripts/bootstrap-api-key.mjs [workspace_id] [label]
+```
+
+**Exemplo:**
+```bash
+node --env-file=.env.local scripts/bootstrap-api-key.mjs meu-workspace "Producao"
+```
+
+A chave raw (`wk_...`) e exibida **uma unica vez** — salve-a imediatamente em um secret manager.
+Apenas o hash SHA-256 e persistido no banco (`workspace_api_keys.key_hash`).
+
+#### Uso
+
+Envie o header em todas as chamadas autenticadas:
+
+```
+Authorization: Bearer wk_<64 chars hex>
+```
+
+#### Exemplo — listar canais
+
+```bash
+curl -H "Authorization: Bearer wk_abc123..." \
+  http://localhost:3000/api/whatsapp/channels
+```
+
+### Respostas de autenticacao
+
+| Situacao                        | Status |
+|---------------------------------|--------|
+| Header `Authorization` ausente  | 401    |
+| Key invalida ou revogada        | 401    |
+| Recurso de outro workspace      | 403    |
+
+### Perfis LLM
+
+Cada workspace pode ter varios perfis LLM (OpenRouter, OpenAI, Anthropic, Google).
+O perfil com `is_default = true` e usado pelo agente `/api/agente`.
+
+```
+GET    /api/llm/profiles          → lista perfis do workspace
+POST   /api/llm/profiles          → cria perfil
+PATCH  /api/llm/profiles/:id      → atualiza nome/modelo/chave/default
+DELETE /api/llm/profiles/:id      → remove perfil
+POST   /api/llm/profiles/:id/test → testa conectividade (retorna latencyMs)
+```
+
+Configure pelo painel em `/whatsapp/llm`.
+
+---
+
+## Campanhas WhatsApp
+
+Disparo em massa para listas de empresas encontradas pelo agente.
+
+```
+POST   /api/campaigns              → cria campanha (draft)
+GET    /api/campaigns/:id/status   → status + contadores
+POST   /api/campaigns/:id/start    → inicia (draft → awaiting_confirmation)
+POST   /api/campaigns/:id/pause    → pausa envios
+POST   /api/campaigns/:id/resume   → retoma envios
+POST   /api/campaigns/:id/cancel   → cancela (irreversivel)
+PATCH  /api/campaigns/:id/automation → atualiza delay/jitter/max_per_hour/max_retries/horario
+POST   /api/campaigns/process      → processamento por cron (auth via CRON_SECRET)
+```
+
+**Maquina de estados:** `draft → awaiting_confirmation → awaiting_channel → awaiting_message → ready_to_send → sending ↔ paused → completed / completed_with_errors / cancelled`
+
+**Automacao configuravel em tempo real** via `PATCH /automation` (campos opcionais, so altera o que for enviado):
+- `delay_seconds` (≥ 10): intervalo entre envios
+- `jitter_max` (≥ 0): variacao aleatoria adicional em segundos
+- `max_per_hour` (≥ 1): limite de envios por hora
+- `max_retries` (≥ 0): tentativas em caso de erro transitorio (429/5xx)
+- `working_hours_start` / `working_hours_end`: janela de envio em UTC-3 (HH:MM)
 
 ---
 
@@ -212,3 +340,7 @@ npm run test:integration
 | Output masking       | Allow-list de 10 campos; emails e telefones so do cadastro publico |
 | Headers HTTP         | CSP, HSTS, X-Frame-Options, X-Content-Type-Options                 |
 | Validacao de entrada | Zod em todas as rotas; sem campos extras passando para o SQL       |
+| Nicho guard          | `nicho` sem CNAE conhecido → 400 (busca/export) ou clarify (agente) em vez de scan total |
+| Auth antes do CNAE   | Resolucao de nicho → IBGE API so ocorre apos autenticacao validada |
+| Sessao web           | Cookie HttpOnly, SameSite=Strict, 8h TTL, hash SHA-256 no banco    |
+| workspace_id         | Vem 100% do token/sessao (DB lookup); nunca do corpo da requisicao |

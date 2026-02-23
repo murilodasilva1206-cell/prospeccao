@@ -1,4 +1,99 @@
 // ---------------------------------------------------------------------------
+// Dynamic CNAE resolution — queries cnae_dictionary table (migration 011)
+// with a short TTL in-memory cache to avoid per-request DB round-trips.
+// ---------------------------------------------------------------------------
+
+import { LRUCache } from 'lru-cache'
+import pool from '@/lib/database'
+import { logger } from '@/lib/logger'
+
+// Bounded LRU cache: at most 500 unique nicho strings, each entry lives 5 min.
+// LRUCache handles both eviction (max) and expiry (ttl) automatically, so the
+// Map never grows without limit.
+const _dynamicCache = new LRUCache<string, string>({
+  max: 500,
+  ttl: 5 * 60 * 1000, // 5 minutes in ms
+})
+
+/**
+ * Clears the in-memory CNAE cache.
+ * @internal Exported only for test isolation — do not call in production code.
+ */
+export function _clearDynamicCacheForTesting(): void {
+  _dynamicCache.clear()
+}
+
+/**
+ * Resolves a nicho (free text) to a CNAE code by querying the `cnae_dictionary`
+ * table.  Results are cached in memory for CACHE_TTL_MS to reduce DB load.
+ *
+ * Matching priority (deterministic — highest score wins):
+ *   3 — Exact synonym match  : normalized nicho equals any element in `sinonimos`
+ *   2 — Substring synonym    : nicho contains, or is contained by, a synonym
+ *   1 — Description fuzzy   : normalized nicho appears inside `descricao` (ILIKE)
+ *
+ * Returns undefined if nothing matches or if the DB is unavailable (falls back
+ * to the static NICHO_CNAE_MAP in the caller).
+ */
+export async function resolveNichoCnaeDynamic(nicho: string): Promise<string | undefined> {
+  const normalized = nicho
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+
+  if (!normalized) return undefined
+
+  // Cache hit — LRUCache handles TTL expiry automatically
+  const cached = _dynamicCache.get(normalized)
+  if (cached !== undefined) return cached
+
+  try {
+    const client = await pool.connect()
+    try {
+      // Score each row by match quality so the result is deterministic for
+      // ambiguous inputs: exact synonym (3) > substring synonym (2) > fuzzy
+      // description (1).  Without ORDER BY, LIMIT 1 is non-deterministic.
+      const { rows } = await client.query<{ codigo: string }>(
+        `SELECT codigo,
+                CASE
+                  WHEN $1 = ANY(sinonimos) THEN 3
+                  WHEN EXISTS (
+                         SELECT 1 FROM unnest(sinonimos) AS s
+                         WHERE $1 ILIKE ('%' || s || '%') OR s ILIKE ('%' || $1 || '%')
+                       ) THEN 2
+                  ELSE 1
+                END AS score
+         FROM cnae_dictionary
+         WHERE $1 = ANY(sinonimos)
+            OR EXISTS (
+                 SELECT 1 FROM unnest(sinonimos) AS s
+                 WHERE $1 ILIKE ('%' || s || '%') OR s ILIKE ('%' || $1 || '%')
+               )
+            OR descricao ILIKE $2
+         ORDER BY score DESC, codigo ASC
+         LIMIT 1`,
+        [normalized, `%${normalized}%`],
+      )
+      if (rows.length > 0) {
+        _dynamicCache.set(normalized, rows[0].codigo)
+        return rows[0].codigo
+      }
+    } finally {
+      client.release()
+    }
+  } catch (err) {
+    // DB unavailable — warn so ops can diagnose, then let caller fall back to static map
+    logger.warn(
+      { nicho: normalized, err: err instanceof Error ? err.message : String(err) },
+      'resolveNichoCnaeDynamic: DB lookup failed, falling back to static map',
+    )
+  }
+
+  return undefined
+}
+
+// ---------------------------------------------------------------------------
 // Mapeamento nicho de negócio → código CNAE principal
 //
 // Usado pelo agente: o AI pode retornar o campo `nicho` (texto livre) e a

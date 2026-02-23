@@ -1,10 +1,9 @@
-import { env } from './env'
 import { logger } from './logger'
-import { openRouterBreaker } from './circuit-breaker'
+import { CircuitBreaker } from './circuit-breaker'
 import { SYSTEM_PROMPT } from './agent-prompts'
 import { AgentIntentSchema, type AgentIntent } from './schemas'
+import { callLlmProvider, type LlmCallConfig } from './llm-providers'
 
-const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 const AI_TIMEOUT_MS = 15_000 // 15-second hard timeout for AI response
 
 export interface AiCallResult {
@@ -13,57 +12,84 @@ export interface AiCallResult {
   parseSuccess: boolean
 }
 
+// ---------------------------------------------------------------------------
+// Per-provider circuit breakers
+//
+// One breaker per provider isolates failures: a degraded OpenAI instance does
+// not trip the breaker for Google or Anthropic calls from other workspaces.
+// ---------------------------------------------------------------------------
+const _breakerMap = new Map<string, CircuitBreaker>()
+
+function getBreakerFor(provider: string): CircuitBreaker {
+  let b = _breakerMap.get(provider)
+  if (!b) {
+    b = new CircuitBreaker(`llm:${provider}`, {
+      failureThreshold: 5,  // open after 5 consecutive failures
+      successThreshold: 2,  // close after 2 successes in HALF_OPEN
+      timeout: 30_000,      // wait 30 s before probing
+    })
+    _breakerMap.set(provider, b)
+  }
+  return b
+}
+
+// ---------------------------------------------------------------------------
+// JSON extraction helper
+//
+// LLMs sometimes wrap their response in markdown fences or add explanatory
+// prose. This extracts the JSON object before passing it to JSON.parse so
+// that "Sure! ```json\n{...}\n```" still parses correctly.
+// ---------------------------------------------------------------------------
+function extractJson(raw: string): string {
+  // 1. Markdown code fence: ```json ... ``` or ``` ... ```
+  const fenceMatch = raw.match(/```(?:json)?[\s\S]*?```/)
+  if (fenceMatch) {
+    const inner = fenceMatch[0].replace(/^```(?:json)?/, '').replace(/```$/, '').trim()
+    if (inner) return inner
+  }
+  // 2. Raw JSON object — may have surrounding prose
+  const objMatch = raw.match(/{[\s\S]*}/)
+  if (objMatch) return objMatch[0]
+
+  return raw.trim()
+}
+
 /**
- * Calls OpenRouter with the user's message, validates the response,
- * and returns a structured intent object.
+ * Calls an LLM provider using the supplied workspace profile config.
+ *
+ * The caller (route layer) is responsible for supplying a valid LlmCallConfig.
+ * There is NO global API key fallback here — that decision belongs at the route
+ * level where the 409 "configure your LLM" response can be returned cleanly.
  *
  * Security properties:
  * - System and user are ALWAYS separate message objects (never concatenated).
  * - Response is validated with AgentIntentSchema before any field is used.
- * - Falls back to a safe deterministic result if AI response is invalid.
- * - Circuit breaker prevents cascade failures when OpenRouter is degraded.
+ * - Falls back to a safe deterministic result if AI response is invalid/unparseable.
+ * - Per-provider circuit breaker isolates failures across workspaces and providers.
  * - AbortController enforces a 15-second hard timeout.
  */
-export async function callAiAgent(userMessage: string): Promise<AiCallResult> {
+export async function callAiAgent(
+  userMessage: string,
+  profile: LlmCallConfig,
+): Promise<AiCallResult> {
   const startTime = Date.now()
+  const breaker = getBreakerFor(profile.provider)
 
-  const rawContent = await openRouterBreaker.execute(async () => {
+  const rawContent = await breaker.execute(async () => {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS)
 
     try {
-      const res = await fetch(OPENROUTER_URL, {
-        method: 'POST',
-        signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          // OPENROUTER_API_KEY is in pino's redact list — never appears in logs
-          Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
-          'HTTP-Referer': 'https://prospeccao.app',
-          'X-Title': 'Prospeccao Contact Search',
-        },
-        body: JSON.stringify({
-          model: env.OPENROUTER_MODEL,
-          messages: [
-            // CRITICAL: system and user are SEPARATE objects.
-            // Never concatenate: `${SYSTEM_PROMPT}\n${userMessage}`
-            // Concatenation allows injection — user text can end the "instruction" section.
-            { role: 'system', content: SYSTEM_PROMPT },
-            { role: 'user', content: userMessage },
-          ],
-          max_tokens: 300, // keep responses short and structured
-          temperature: 0.1, // low temperature for deterministic structured output
-          response_format: { type: 'json_object' }, // JSON mode enforced
-        }),
-      })
-
-      if (!res.ok) {
-        const body = await res.text().catch(() => '')
-        throw new Error(`OpenRouter HTTP ${res.status}: ${res.statusText}. ${body}`)
-      }
-
-      const json = await res.json()
-      return (json.choices?.[0]?.message?.content as string) ?? ''
+      // CRITICAL: system and user are SEPARATE message objects inside callLlmProvider.
+      // Never concatenate: `${SYSTEM_PROMPT}\n${userMessage}`
+      return await callLlmProvider(
+        profile,
+        SYSTEM_PROMPT,
+        userMessage,
+        300,  // max_tokens: keep responses short and structured
+        0.1,  // temperature: low for deterministic structured output
+        controller.signal,
+      )
     } finally {
       clearTimeout(timer)
     }
@@ -76,13 +102,14 @@ export async function callAiAgent(userMessage: string): Promise<AiCallResult> {
   let parseSuccess: boolean
 
   try {
-    const parsed = JSON.parse(rawContent)
+    const jsonStr = extractJson(rawContent)
+    const parsed = JSON.parse(jsonStr)
     intent = AgentIntentSchema.parse(parsed)
     parseSuccess = true
   } catch (err) {
     // AI returned invalid JSON or schema mismatch — fall back to safe default
     logger.warn(
-      { rawContent: rawContent.slice(0, 200), err, latencyMs },
+      { rawContent: rawContent.slice(0, 200), err, latencyMs, provider: profile.provider },
       'AI response parse failed — using deterministic fallback',
     )
     intent = ruleBasedFallback()
@@ -90,16 +117,20 @@ export async function callAiAgent(userMessage: string): Promise<AiCallResult> {
   }
 
   logger.info(
-    {
-      action: intent.action,
-      confidence: intent.confidence,
-      latencyMs,
-      parseSuccess,
-    },
+    { action: intent.action, confidence: intent.confidence, latencyMs, parseSuccess, provider: profile.provider },
     'AI agent call complete',
   )
 
   return { intent, latencyMs, parseSuccess }
+}
+
+/**
+ * Resets the circuit breaker for a specific provider.
+ * @internal Exposed for test isolation only — do not use in production code.
+ */
+export function _resetBreakerForTest(provider: string): void {
+  const b = _breakerMap.get(provider)
+  if (b) b._reset()
 }
 
 /**

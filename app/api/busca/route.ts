@@ -7,7 +7,8 @@ import { getClientIp } from '@/lib/get-ip'
 import { BuscaQuerySchema } from '@/lib/schemas'
 import { buildContactsQuery, buildCountQuery } from '@/lib/query-builder'
 import { maskContact } from '@/lib/mask-output'
-import { resolveNichoCnae } from '@/lib/nicho-cnae'
+import { getCnaeResolverService } from '@/lib/cnae-resolver-service'
+import { requireWorkspaceAuth, authErrorResponse, type AuthContext } from '@/lib/whatsapp/auth-middleware'
 
 export async function GET(request: NextRequest) {
   const requestId = crypto.randomUUID()
@@ -49,23 +50,52 @@ export async function GET(request: NextRequest) {
     throw err
   }
 
-  // 3. Resolve nicho -> cnae_principal if cnae_principal not explicitly provided
+  // 3. Auth — must precede CNAE resolution (which may call the IBGE API or DB).
+  //    workspace_id is used for audit logging only; estabelecimentos is a public
+  //    CNPJ registry shared across all workspaces — filtering by it would be wrong.
+  let auth: AuthContext
+  {
+    const authClient = await pool.connect()
+    try {
+      auth = await requireWorkspaceAuth(request, authClient)
+    } catch (err) {
+      const res = authErrorResponse(err)
+      if (res) return res
+      log.error({ err }, 'Erro inesperado durante autenticacao em /api/busca')
+      return NextResponse.json({ error: 'Erro interno do servidor' }, { status: 500 })
+    } finally {
+      authClient.release()
+    }
+  }
+
+  // 4. Resolve nicho → cnae_principal via the 4-layer cascade
+  //    (LRU cache → cnae_dictionary → static map → IBGE API)
+  //    Safe: only runs after a valid authenticated request.
   if (filters.nicho && !filters.cnae_principal) {
-    const resolved = resolveNichoCnae(filters.nicho)
+    const resolved = await getCnaeResolverService().resolve(filters.nicho)
     if (resolved) {
       filters = { ...filters, cnae_principal: resolved }
       log.debug({ nicho: filters.nicho, cnae: resolved }, 'Nicho resolvido para CNAE')
     }
   }
 
-  // 4. Execute parameterized queries
+  // Guard: nicho was given but couldn't be mapped — reject rather than scanning
+  // the whole table with no sector filter, which returns meaningless results.
+  if (filters.nicho && !filters.cnae_principal) {
+    return NextResponse.json(
+      { error: 'Nicho não reconhecido. Tente um segmento mais específico, como "dentistas" ou "restaurantes".' },
+      { status: 400 },
+    )
+  }
+
+  // 5. Execute parameterized queries (single DB connection)
   try {
     const client = await pool.connect()
     try {
       const { text, values } = buildContactsQuery(filters)
       const { text: countText, values: countValues } = buildCountQuery(filters)
 
-      log.debug({ filters }, 'Executando busca')
+      log.debug({ filters, workspace_id: auth.workspace_id, actor: auth.actor }, 'Executando busca')
 
       const [rows, countResult] = await Promise.all([
         client.query(text, values),
@@ -75,7 +105,7 @@ export async function GET(request: NextRequest) {
       const data = rows.rows.map(maskContact)
       const total = Number(countResult.rows[0]?.total ?? 0)
 
-      log.info({ resultCount: data.length, total }, 'Busca concluida')
+      log.info({ resultCount: data.length, total, workspace_id: auth.workspace_id, actor: auth.actor }, 'Busca concluida')
 
       return NextResponse.json({
         data,

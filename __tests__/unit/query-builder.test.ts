@@ -96,6 +96,24 @@ describe('buildContactsQuery', () => {
     expect(text).toMatch(/ORDER BY municipio desc/i)
   })
 
+  it('appends cnpj_completo ASC as stable tiebreaker in all ORDER BY clauses', () => {
+    // Generic ordering (e.g. municipio desc) — tiebreaker must follow
+    const { text: textGeneric } = buildContactsQuery({
+      ...baseFilters,
+      orderBy: 'municipio',
+      orderDir: 'desc',
+    })
+    expect(textGeneric).toMatch(/municipio desc,\s*cnpj_completo ASC/i)
+
+    // contato_priority CASE expression — tiebreaker must also be present
+    const { text: textPriority } = buildContactsQuery({
+      ...baseFilters,
+      orderBy: 'contato_priority',
+      orderDir: 'asc',
+    })
+    expect(textPriority).toMatch(/cnpj_completo ASC/i)
+  })
+
   it('does not allow arbitrary strings in ORDER BY (schema prevents this)', () => {
     expect(() =>
       BuscaQuerySchema.parse({ orderBy: '1; SELECT pg_sleep(5); --' })

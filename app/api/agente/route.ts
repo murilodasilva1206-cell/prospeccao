@@ -9,8 +9,14 @@ import { detectInjectionAttempt } from '@/lib/agent-prompts'
 import { callAiAgent } from '@/lib/ai-client'
 import { buildContactsQuery, buildCountQuery } from '@/lib/query-builder'
 import { maskContact } from '@/lib/mask-output'
-import { resolveNichoCnae } from '@/lib/nicho-cnae'
+import { narrateSearchResult } from '@/lib/ai-narrator'
+import { getCnaeResolverService } from '@/lib/cnae-resolver-service'
+import { requireWorkspaceAuth, authErrorResponse, type AuthContext } from '@/lib/whatsapp/auth-middleware'
+import { getDefaultProfile } from '@/lib/llm-profile-repo'
+import { buildQueryFingerprint, getServedCnpjs, markAsServed } from '@/lib/served-leads-repo'
+import { env } from '@/lib/env'
 import type { BuscaQuery } from '@/lib/schemas'
+import type { LlmCallConfig } from '@/lib/llm-providers'
 
 export async function POST(request: NextRequest) {
   const requestId = crypto.randomUUID()
@@ -35,7 +41,8 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  // 2. Parse and validate request body
+  // 2. Parse and validate request body — before any DB hit so invalid payloads
+  //    are rejected cheaply without consuming a connection.
   let body
   try {
     const raw = await request.json()
@@ -52,7 +59,73 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'JSON invalido no corpo da requisicao' }, { status: 400 })
   }
 
-  // 3. Pre-screen for prompt injection BEFORE calling the AI (fast, no API cost)
+  // 3. Authentication + LLM profile resolution
+  //
+  // Auth: session cookie (web UI) or Bearer wk_... token (API).
+  // Unauthenticated callers always receive 401/403, never a rejection message.
+  //
+  // LLM profile: every workspace must configure its own LLM profile.
+  //   - Production: no profile → 409 "configure sua LLM" (no global fallback).
+  //   - Development: global OPENROUTER_API_KEY is used as a convenience fallback
+  //     with an explicit warning log so the absence of a profile is visible.
+  let authCtx: AuthContext
+  let llmProfile: LlmCallConfig
+  {
+    const authClient = await pool.connect()
+    try {
+      authCtx = await requireWorkspaceAuth(request, authClient)
+
+      let profileOrNull: LlmCallConfig | null = null
+      try {
+        profileOrNull = await getDefaultProfile(authClient, authCtx.workspace_id)
+      } catch (err) {
+        log.warn({ err, workspace_id: authCtx.workspace_id }, 'Erro ao carregar perfil LLM (migration pendente?)')
+      }
+
+      if (profileOrNull === null) {
+        if (env.NODE_ENV !== 'development') {
+          return NextResponse.json(
+            {
+              action: 'reject',
+              error: 'Configure sua chave de LLM em Configurações > Integrações de IA antes de usar o agente.',
+              code: 'LLM_PROFILE_REQUIRED',
+            },
+            { status: 409 },
+          )
+        }
+        // Dev-only fallback: use the global OpenRouter env key with a visible warning.
+        // If that key is also absent, return 409 now rather than letting an empty
+        // string propagate to a confusing generic 503 after the LLM call fails.
+        if (!env.OPENROUTER_API_KEY) {
+          return NextResponse.json(
+            {
+              action: 'reject',
+              error: 'Configure sua chave de LLM em Configurações > Integrações de IA antes de usar o agente.',
+              code: 'LLM_PROFILE_REQUIRED',
+            },
+            { status: 409 },
+          )
+        }
+        log.warn('[DEV ONLY] Nenhum perfil LLM configurado — usando OPENROUTER_API_KEY global. Configure um perfil em /whatsapp/llm.')
+        llmProfile = {
+          apiKey: env.OPENROUTER_API_KEY,
+          model: env.OPENROUTER_MODEL,
+          provider: 'openrouter',
+        }
+      } else {
+        llmProfile = profileOrNull
+      }
+    } catch (err) {
+      const res = authErrorResponse(err)
+      if (res) return res
+      log.error({ err }, 'Unexpected error during auth on /api/agente')
+      return NextResponse.json({ error: 'Erro interno' }, { status: 500 })
+    } finally {
+      authClient.release()
+    }
+  }
+
+  // 4. Pre-screen for prompt injection — fast regex check, no API cost
   if (detectInjectionAttempt(body.message)) {
     log.warn(
       { messagePreview: body.message.slice(0, 100) },
@@ -65,10 +138,11 @@ export async function POST(request: NextRequest) {
     })
   }
 
-  // 4. Call AI with circuit breaker, guardrails, and structured output validation
+  // 5. Call AI with circuit breaker, guardrails, and structured output validation.
+  //    Uses the workspace LLM profile resolved above (guaranteed non-null at this point).
   let intent, latencyMs, parseSuccess
   try {
-    ;({ intent, latencyMs, parseSuccess } = await callAiAgent(body.message))
+    ;({ intent, latencyMs, parseSuccess } = await callAiAgent(body.message, llmProfile))
   } catch (err) {
     log.error({ err }, 'AI agent call failed')
     return NextResponse.json(
@@ -86,14 +160,27 @@ export async function POST(request: NextRequest) {
     })
   }
 
-  // 5. Resolve nicho → cnae_principal before building query
+  // 6. Resolve nicho → cnae_principal through 4-layer cascade:
+  //    LRU cache → cnae_dictionary → IBGE API → persist discovery.
   const rawFilters = intent.filters ?? {}
   if (rawFilters.nicho && !rawFilters.cnae_principal) {
-    const resolved = resolveNichoCnae(rawFilters.nicho)
+    const resolved = await getCnaeResolverService().resolve(rawFilters.nicho)
     if (resolved) {
       rawFilters.cnae_principal = resolved
       log.debug({ nicho: rawFilters.nicho, cnae: resolved }, 'Nicho resolved to CNAE')
     }
+  }
+
+  // Guard: if a nicho was given but couldn't be mapped to a CNAE, a DB scan
+  // with no sector filter would return meaningless results. Ask the user to
+  // rephrase rather than executing an expensive full-table query.
+  if (rawFilters.nicho && !rawFilters.cnae_principal) {
+    log.info({ nicho: rawFilters.nicho }, 'Nicho nao resolvido para CNAE — solicitando esclarecimento')
+    return NextResponse.json({
+      action: 'clarify',
+      message: 'Não consegui identificar o setor cadastral para esse nicho. Tente ser mais específico — por exemplo: "dentistas", "restaurantes", "academias de ginástica".',
+      metadata: { latencyMs, parseSuccess, confidence: intent.confidence },
+    })
   }
 
   // Build complete BuscaQuery with defaults
@@ -105,7 +192,7 @@ export async function POST(request: NextRequest) {
     situacao_cadastral: rawFilters.situacao_cadastral ?? 'ATIVA',
     tem_telefone: rawFilters.tem_telefone,
     tem_email: rawFilters.tem_email,
-    orderBy: rawFilters.orderBy ?? 'razao_social',
+    orderBy: rawFilters.orderBy ?? 'contato_priority',
     orderDir: rawFilters.orderDir ?? 'asc',
     page: rawFilters.page ?? 1,
     limit: rawFilters.limit ?? 20,
@@ -130,36 +217,100 @@ export async function POST(request: NextRequest) {
     })
   }
 
-  // 6. Execute DB search and return real data
+  // 7. Execute DB search and return real data
   try {
     const client = await pool.connect()
     try {
-      const { text, values } = buildContactsQuery(filters)
+      const requestedLimit = filters.limit
       const { text: countText, values: countValues } = buildCountQuery(filters)
 
-      log.debug({ filters }, 'Agent executing search query')
+      log.debug({ filters, workspace_id: authCtx.workspace_id, actor: authCtx.actor }, 'Agent executing search query')
 
-      const [rows, countResult] = await Promise.all([
-        client.query(text, values),
+      // Fingerprint uses resolved cnae_principal (not raw nicho) so different phrasings
+      // of the same sector share one dedup pool. Accent-normalized in buildQueryFingerprint.
+      const fingerprint = buildQueryFingerprint({
+        uf:                 filters.uf,
+        municipio:          filters.municipio,
+        cnae_principal:     filters.cnae_principal,
+        nicho:              filters.cnae_principal ? null : rawFilters.nicho,
+        situacao_cadastral: filters.situacao_cadastral,
+      })
+
+      // Run count + served-leads lookup before the pagination loop.
+      // getServedCnpjs failure (table not yet migrated) falls back to empty set.
+      const [countResult, servedSet] = await Promise.all([
         client.query(countText, countValues),
+        getServedCnpjs(client, authCtx.workspace_id, authCtx.dedup_actor_id, fingerprint)
+          .catch(() => new Set<string>()),
       ])
-
-      const data = rows.rows.map(maskContact)
       const total = Number(countResult.rows[0]?.total ?? 0)
 
-      log.info({ resultCount: data.length, total, latencyMs }, 'Agent search success')
+      // Incremental pagination: fetch one page at a time until we collect
+      // requestedLimit fresh (never-served) results or the DB is exhausted.
+      //
+      // MAX_PAGES scales with requestedLimit so large requests can still fill
+      // their quota when dedup history is dense, but is capped at 20 to bound
+      // the number of DB round-trips per API call. Beyond 20 pages the tradeoff
+      // between freshness and latency/DB pressure tips negative — operators should
+      // reset the lead pool or reduce the retention window instead.
+      // We log a warning whenever the cap is hit so the condition is visible.
+      const accumulated: ReturnType<typeof maskContact>[] = []
+      const seenInBatch = new Set<string>()  // prevents cross-page duplicates (unstable ordering)
+      let page = filters.page ?? 1
+      const MAX_PAGES = Math.min(Math.max(5, requestedLimit), 20)
+      let cappedEarly = false
+
+      for (let i = 0; i < MAX_PAGES && accumulated.length < requestedLimit; i++) {
+        const { text, values } = buildContactsQuery({ ...filters, page, limit: requestedLimit })
+        const rows = await client.query(text, values)
+        if (rows.rows.length === 0) break
+
+        const fresh = rows.rows
+          .map(maskContact)
+          .filter((r) => !servedSet.has(r.cnpj) && !seenInBatch.has(r.cnpj))
+        fresh.forEach((r) => seenInBatch.add(r.cnpj))
+        accumulated.push(...fresh)
+
+        if (rows.rows.length < requestedLimit) break  // DB returned fewer than batch — exhausted
+        if (i === MAX_PAGES - 1 && accumulated.length < requestedLimit) cappedEarly = true
+        page++
+      }
+
+      if (cappedEarly) {
+        log.warn(
+          { requestedLimit, filled: accumulated.length, pagesSearched: MAX_PAGES, workspace_id: authCtx.workspace_id },
+          'Pagination cap reached — fewer fresh leads than requested; consider resetting the lead pool or reducing the retention window',
+        )
+      }
+
+      const data = accumulated.slice(0, requestedLimit)
+
+      // Mark results as served (best-effort; table-missing failure must not block response)
+      await markAsServed(client, authCtx.workspace_id, authCtx.dedup_actor_id, fingerprint, data.map((r) => r.cnpj))
+        .catch(() => {})
+
+      // Narrator: generate natural PT-BR headline + subtitle (always returns a value)
+      const narration = await narrateSearchResult(body.message, intent, data, total, llmProfile)
+
+      log.info(
+        { resultCount: data.length, total, latencyMs, narratorSource: narration.source, workspace_id: authCtx.workspace_id, actor: authCtx.actor },
+        'Agent search success',
+      )
 
       return NextResponse.json({
         action: 'search',
         filters,
         data,
+        headline: narration.headline,
+        subtitle: narration.subtitle,
+        hasCta: narration.hasCta,
         meta: {
           total,
           page: filters.page,
           limit: filters.limit,
           pages: Math.ceil(total / filters.limit),
         },
-        metadata: { latencyMs, parseSuccess, confidence: intent.confidence },
+        metadata: { latencyMs, parseSuccess, confidence: intent.confidence, narratorSource: narration.source },
       })
     } finally {
       client.release()

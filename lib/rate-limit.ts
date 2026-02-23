@@ -182,3 +182,103 @@ export const exportLimiter = createRateLimiter({
   interval: 60_000,
   maxRequests: 5, // 5 exports / minute / IP
 })
+
+// ---------------------------------------------------------------------------
+// WhatsApp channel management limiters
+// ---------------------------------------------------------------------------
+
+/** /api/whatsapp/channels (CRUD) and connect/disconnect/status operations */
+export const whatsappChannelLimiter = createRateLimiter({
+  name: 'whatsapp-channel',
+  uniqueTokenPerInterval: 500,
+  interval: 60_000,
+  maxRequests: 10, // 10 management ops / minute / IP
+})
+
+/** /api/whatsapp/channels/:id/send — message sending */
+export const whatsappSendLimiter = createRateLimiter({
+  name: 'whatsapp-send',
+  uniqueTokenPerInterval: 500,
+  interval: 60_000,
+  maxRequests: 60, // 60 messages / minute / IP
+})
+
+/** /api/whatsapp/webhook/:provider/:channelId — inbound webhook from providers */
+export const whatsappWebhookLimiter = createRateLimiter({
+  name: 'whatsapp-webhook',
+  uniqueTokenPerInterval: 1000,
+  interval: 60_000,
+  maxRequests: 500, // high limit — external provider traffic
+})
+
+/** /api/whatsapp/channels/:id/send-media — media file uploads and sends */
+export const whatsappMediaLimiter = createRateLimiter({
+  name: 'whatsapp-media',
+  uniqueTokenPerInterval: 500,
+  interval: 60_000,
+  maxRequests: 20, // 20 media sends / minute / IP
+})
+
+/** /api/whatsapp/conversations — inbox conversation listing */
+export const whatsappConversationLimiter = createRateLimiter({
+  name: 'whatsapp-conversation',
+  uniqueTokenPerInterval: 500,
+  interval: 60_000,
+  maxRequests: 60, // 60 conversation reads / minute / IP
+})
+
+/** /api/whatsapp/conversations/:id/messages — message thread reads */
+export const whatsappInboxLimiter = createRateLimiter({
+  name: 'whatsapp-inbox',
+  uniqueTokenPerInterval: 500,
+  interval: 60_000,
+  maxRequests: 120, // 120 message fetches / minute / IP (frequent polling)
+})
+
+/** /api/whatsapp/keys — API key management (tight limit — bootstrap endpoint) */
+export const whatsappKeysLimiter = createRateLimiter({
+  name: 'whatsapp-keys',
+  uniqueTokenPerInterval: 100,
+  interval: 60_000,
+  maxRequests: 5, // 5 key operations / minute / IP
+})
+
+// ---------------------------------------------------------------------------
+// Campaign limiters
+// ---------------------------------------------------------------------------
+
+/** /api/campaigns — campaign creation and management */
+export const campaignLimiter = createRateLimiter({
+  name: 'campaigns',
+  uniqueTokenPerInterval: 500,
+  interval: 60_000,
+  maxRequests: 20, // 20 campaign ops / minute / IP
+})
+
+/** /api/campaigns/:id/send — tight: batch WhatsApp sends are expensive */
+export const campaignSendLimiter = createRateLimiter({
+  name: 'campaigns-send',
+  uniqueTokenPerInterval: 200,
+  interval: 60_000,
+  maxRequests: 3, // 3 send requests / minute / IP
+})
+
+// ---------------------------------------------------------------------------
+// Auth limiter
+// ---------------------------------------------------------------------------
+
+/** /api/auth/login — very tight: prevents brute-force password attacks */
+export const loginLimiter = createRateLimiter({
+  name: 'login',
+  uniqueTokenPerInterval: 200,
+  interval: 60_000,
+  maxRequests: 5, // 5 attempts / minute / IP
+})
+
+/** /api/auth/register — one-shot bootstrap, but guard against automated abuse on fresh deploys */
+export const registerLimiter = createRateLimiter({
+  name: 'register',
+  uniqueTokenPerInterval: 100,
+  interval: 60_000,
+  maxRequests: 3, // 3 attempts / minute / IP
+})
