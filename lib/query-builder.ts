@@ -85,10 +85,12 @@ export function buildContactsQuery(filters: BuscaQuery): QueryResult {
   // orderBy is z.enum() validated — safe to interpolate.
   // 'contato_priority' uses a CASE expression (not a column name) so it never
   // reaches the database as an arbitrary identifier.
+  // cnpj_completo (PK, unique) is appended as a stable tiebreaker on every ordering
+  // so OFFSET-based pagination is deterministic even when primary sort keys tie.
   const orderExpression =
     filters.orderBy === 'contato_priority'
-      ? `(CASE WHEN (telefone1 IS NOT NULL AND telefone1 <> '') OR (telefone2 IS NOT NULL AND telefone2 <> '') THEN 0 ELSE 1 END) ASC, (CASE WHEN correio_eletronico IS NOT NULL AND correio_eletronico <> '' THEN 0 ELSE 1 END) ASC, razao_social ${filters.orderDir}`
-      : `${filters.orderBy} ${filters.orderDir}`
+      ? `(CASE WHEN (telefone1 IS NOT NULL AND telefone1 <> '') OR (telefone2 IS NOT NULL AND telefone2 <> '') THEN 0 ELSE 1 END) ASC, (CASE WHEN correio_eletronico IS NOT NULL AND correio_eletronico <> '' THEN 0 ELSE 1 END) ASC, razao_social ${filters.orderDir}, cnpj_completo ASC`
+      : `${filters.orderBy} ${filters.orderDir}, cnpj_completo ASC`
   const orderClause = `ORDER BY ${orderExpression}`
 
   const offset = (filters.page - 1) * filters.limit

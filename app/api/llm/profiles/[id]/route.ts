@@ -64,6 +64,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     if (err instanceof Error && err.message.includes('unique')) {
       return NextResponse.json({ error: 'Já existe um perfil com esse nome neste workspace' }, { status: 409 })
     }
+    if ((err as { code?: string }).code === '42P01') {
+      return NextResponse.json({ error: 'Tabela llm_profiles não encontrada. Execute a migration 015.' }, { status: 500 })
+    }
     log.error({ err }, 'PATCH /api/llm/profiles/:id error')
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   } finally {
@@ -94,6 +97,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     return new NextResponse(null, { status: 204 })
   } catch (err) {
     if (err instanceof AuthError) return NextResponse.json({ error: err.message }, { status: 401 })
+    if ((err as { code?: string }).code === '42P01') {
+      return NextResponse.json({ error: 'Tabela llm_profiles não encontrada. Execute a migration 015.' }, { status: 500 })
+    }
     log.error({ err }, 'DELETE /api/llm/profiles/:id error')
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   } finally {

@@ -4,7 +4,7 @@ import type { NextRequest } from 'next/server'
 const SESSION_COOKIE = 'session'
 const SESSION_EXP_COOKIE = 'session_exp'
 
-export function middleware(_request: NextRequest) {
+export function proxy(_request: NextRequest) {
   const pathname = _request.nextUrl.pathname
 
   // ---------------------------------------------------------------------------

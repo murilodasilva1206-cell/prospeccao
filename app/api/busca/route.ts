@@ -79,6 +79,15 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // Guard: nicho was given but couldn't be mapped — reject rather than scanning
+  // the whole table with no sector filter, which returns meaningless results.
+  if (filters.nicho && !filters.cnae_principal) {
+    return NextResponse.json(
+      { error: 'Nicho não reconhecido. Tente um segmento mais específico, como "dentistas" ou "restaurantes".' },
+      { status: 400 },
+    )
+  }
+
   // 5. Execute parameterized queries (single DB connection)
   try {
     const client = await pool.connect()

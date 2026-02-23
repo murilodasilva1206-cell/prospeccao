@@ -171,6 +171,18 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Guard: if a nicho was given but couldn't be mapped to a CNAE, a DB scan
+  // with no sector filter would return meaningless results. Ask the user to
+  // rephrase rather than executing an expensive full-table query.
+  if (rawFilters.nicho && !rawFilters.cnae_principal) {
+    log.info({ nicho: rawFilters.nicho }, 'Nicho nao resolvido para CNAE — solicitando esclarecimento')
+    return NextResponse.json({
+      action: 'clarify',
+      message: 'Não consegui identificar o setor cadastral para esse nicho. Tente ser mais específico — por exemplo: "dentistas", "restaurantes", "academias de ginástica".',
+      metadata: { latencyMs, parseSuccess, confidence: intent.confidence },
+    })
+  }
+
   // Build complete BuscaQuery with defaults
   const filters: BuscaQuery = {
     uf: rawFilters.uf,
@@ -209,53 +221,76 @@ export async function POST(request: NextRequest) {
   try {
     const client = await pool.connect()
     try {
-      // Fetch 2x the requested limit to have headroom after deduplication
       const requestedLimit = filters.limit
-      const fetchFilters: BuscaQuery = { ...filters, limit: requestedLimit * 2 }
-
-      const { text, values } = buildContactsQuery(fetchFilters)
       const { text: countText, values: countValues } = buildCountQuery(filters)
 
       log.debug({ filters, workspace_id: authCtx.workspace_id, actor: authCtx.actor }, 'Agent executing search query')
 
-      const [rows, countResult] = await Promise.all([
-        client.query(text, values),
-        client.query(countText, countValues),
-      ])
+      // Fingerprint uses resolved cnae_principal (not raw nicho) so different phrasings
+      // of the same sector share one dedup pool. Accent-normalized in buildQueryFingerprint.
+      const fingerprint = buildQueryFingerprint({
+        uf:                 filters.uf,
+        municipio:          filters.municipio,
+        cnae_principal:     filters.cnae_principal,
+        nicho:              filters.cnae_principal ? null : rawFilters.nicho,
+        situacao_cadastral: filters.situacao_cadastral,
+      })
 
-      let data = rows.rows.map(maskContact)
+      // Run count + served-leads lookup before the pagination loop.
+      // getServedCnpjs failure (table not yet migrated) falls back to empty set.
+      const [countResult, servedSet] = await Promise.all([
+        client.query(countText, countValues),
+        getServedCnpjs(client, authCtx.workspace_id, authCtx.dedup_actor_id, fingerprint)
+          .catch(() => new Set<string>()),
+      ])
       const total = Number(countResult.rows[0]?.total ?? 0)
 
-      // Deduplicate: exclude CNPJs already served to this actor for the same intent.
-      // Scoped per-actor (authCtx.dedup_actor_id — stable UUID-based ID) so each
-      // operator has an independent lead pool regardless of label renames.
-      // Fingerprint uses resolved cnae_principal (not raw nicho) so different phrasings
-      // of the same sector share one dedup pool within the same actor's history.
-      try {
-        const fingerprint = buildQueryFingerprint({
-          uf:                 filters.uf,
-          municipio:          filters.municipio,
-          cnae_principal:     filters.cnae_principal,
-          nicho:              filters.cnae_principal ? null : rawFilters.nicho, // only when unresolved
-          situacao_cadastral: filters.situacao_cadastral,
-        })
-        const servedSet = await getServedCnpjs(client, authCtx.workspace_id, authCtx.dedup_actor_id, fingerprint)
-        const deduped = data.filter((r) => !servedSet.has(r.cnpj)).slice(0, requestedLimit)
-        await markAsServed(client, authCtx.workspace_id, authCtx.dedup_actor_id, fingerprint, deduped.map((r) => r.cnpj))
-        data = deduped
-      } catch {
-        // Dedup failed (table may not exist yet) — serve results without dedup
-        data = data.slice(0, requestedLimit)
+      // Incremental pagination: fetch one page at a time until we collect
+      // requestedLimit fresh (never-served) results or the DB is exhausted.
+      //
+      // MAX_PAGES scales with requestedLimit so large requests can still fill
+      // their quota when dedup history is dense, but is capped at 20 to bound
+      // the number of DB round-trips per API call. Beyond 20 pages the tradeoff
+      // between freshness and latency/DB pressure tips negative — operators should
+      // reset the lead pool or reduce the retention window instead.
+      // We log a warning whenever the cap is hit so the condition is visible.
+      const accumulated: ReturnType<typeof maskContact>[] = []
+      const seenInBatch = new Set<string>()  // prevents cross-page duplicates (unstable ordering)
+      let page = filters.page ?? 1
+      const MAX_PAGES = Math.min(Math.max(5, requestedLimit), 20)
+      let cappedEarly = false
+
+      for (let i = 0; i < MAX_PAGES && accumulated.length < requestedLimit; i++) {
+        const { text, values } = buildContactsQuery({ ...filters, page, limit: requestedLimit })
+        const rows = await client.query(text, values)
+        if (rows.rows.length === 0) break
+
+        const fresh = rows.rows
+          .map(maskContact)
+          .filter((r) => !servedSet.has(r.cnpj) && !seenInBatch.has(r.cnpj))
+        fresh.forEach((r) => seenInBatch.add(r.cnpj))
+        accumulated.push(...fresh)
+
+        if (rows.rows.length < requestedLimit) break  // DB returned fewer than batch — exhausted
+        if (i === MAX_PAGES - 1 && accumulated.length < requestedLimit) cappedEarly = true
+        page++
       }
 
-      // Narrator: generate natural PT-BR headline + subtitle (falls back to deterministic)
-      const narration = await narrateSearchResult(
-        body.message,
-        intent,
-        data,
-        total,
-        llmProfile,
-      )
+      if (cappedEarly) {
+        log.warn(
+          { requestedLimit, filled: accumulated.length, pagesSearched: MAX_PAGES, workspace_id: authCtx.workspace_id },
+          'Pagination cap reached — fewer fresh leads than requested; consider resetting the lead pool or reducing the retention window',
+        )
+      }
+
+      const data = accumulated.slice(0, requestedLimit)
+
+      // Mark results as served (best-effort; table-missing failure must not block response)
+      await markAsServed(client, authCtx.workspace_id, authCtx.dedup_actor_id, fingerprint, data.map((r) => r.cnpj))
+        .catch(() => {})
+
+      // Narrator: generate natural PT-BR headline + subtitle (always returns a value)
+      const narration = await narrateSearchResult(body.message, intent, data, total, llmProfile)
 
       log.info(
         { resultCount: data.length, total, latencyMs, narratorSource: narration.source, workspace_id: authCtx.workspace_id, actor: authCtx.actor },

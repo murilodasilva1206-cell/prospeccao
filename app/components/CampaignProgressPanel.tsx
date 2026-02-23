@@ -8,13 +8,14 @@
 //   - Counters: enviados, falhas, pendentes
 //   - Countdown to next send
 //   - Control buttons: Pausar / Retomar / Cancelar
+//   - Automation editor: PATCH delay/jitter/max_per_hour/max_retries/working_hours
 //   - Final summary when completed
 //
 // Can be embedded in CampaignWizard (after /start) or standalone (campaign list).
 // ---------------------------------------------------------------------------
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { X, Pause, Play, StopCircle, CheckCircle2, AlertCircle, Loader2, Clock } from 'lucide-react'
+import { X, Pause, Play, StopCircle, CheckCircle2, AlertCircle, Loader2, Clock, Settings } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -41,6 +42,15 @@ interface CampaignStatus {
     working_hours_start: number | null
     working_hours_end: number | null
   }
+}
+
+interface AutomationDraft {
+  delay_seconds: number
+  jitter_max: number
+  max_per_hour: number
+  max_retries: number
+  working_hours_start: number | null
+  working_hours_end: number | null
 }
 
 interface Props {
@@ -105,6 +115,19 @@ export default function CampaignProgressPanel({ campaignId, recipientCount, onCl
   const [loadError, setLoadError] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState<'pause' | 'resume' | 'cancel' | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+
+  // Automation editor
+  const [showAutomationEdit, setShowAutomationEdit] = useState(false)
+  const [automationDraft, setAutomationDraft] = useState<AutomationDraft>({
+    delay_seconds: 120,
+    jitter_max: 20,
+    max_per_hour: 30,
+    max_retries: 3,
+    working_hours_start: null,
+    working_hours_end: null,
+  })
+  const [automationSaving, setAutomationSaving] = useState(false)
+  const [automationError, setAutomationError] = useState<string | null>(null)
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -176,6 +199,88 @@ export default function CampaignProgressPanel({ campaignId, recipientCount, onCl
     [campaignId, fetchStatus],
   )
 
+  const openAutomationEdit = useCallback(() => {
+    if (status?.automation) {
+      setAutomationDraft({
+        delay_seconds:       status.automation.delay_seconds,
+        jitter_max:          status.automation.jitter_max,
+        max_per_hour:        status.automation.max_per_hour,
+        max_retries:         status.automation.max_retries,
+        working_hours_start: status.automation.working_hours_start,
+        working_hours_end:   status.automation.working_hours_end,
+      })
+    }
+    setAutomationError(null)
+    setShowAutomationEdit(true)
+  }, [status])
+
+  const handleSaveAutomation = useCallback(async () => {
+    // Client-side validation before hitting the network
+    if (automationDraft.delay_seconds < 10) {
+      setAutomationError('Intervalo entre envios deve ser no minimo 10 segundos.')
+      return
+    }
+    if (automationDraft.jitter_max < 0) {
+      setAutomationError('Variacao (jitter) nao pode ser negativa.')
+      return
+    }
+    if (automationDraft.max_per_hour < 1) {
+      setAutomationError('Maximo por hora deve ser no minimo 1.')
+      return
+    }
+    if (automationDraft.max_retries < 0) {
+      setAutomationError('Numero de tentativas nao pode ser negativo.')
+      return
+    }
+    const hasStart = automationDraft.working_hours_start !== null
+    const hasEnd   = automationDraft.working_hours_end !== null
+    if (hasStart !== hasEnd) {
+      setAutomationError('Informe horario de inicio e fim juntos, ou deixe ambos em branco.')
+      return
+    }
+
+    // Only send fields that actually changed (diff against current status.automation)
+    const current = status?.automation
+    const patch: Record<string, unknown> = {}
+    if (!current || automationDraft.delay_seconds !== current.delay_seconds)
+      patch.delay_seconds = automationDraft.delay_seconds
+    if (!current || automationDraft.jitter_max !== current.jitter_max)
+      patch.jitter_max = automationDraft.jitter_max
+    if (!current || automationDraft.max_per_hour !== current.max_per_hour)
+      patch.max_per_hour = automationDraft.max_per_hour
+    if (!current || automationDraft.max_retries !== current.max_retries)
+      patch.max_retries = automationDraft.max_retries
+    if (!current || automationDraft.working_hours_start !== current.working_hours_start)
+      patch.working_hours_start = automationDraft.working_hours_start
+    if (!current || automationDraft.working_hours_end !== current.working_hours_end)
+      patch.working_hours_end = automationDraft.working_hours_end
+
+    if (Object.keys(patch).length === 0) {
+      setShowAutomationEdit(false)
+      return
+    }
+
+    setAutomationSaving(true)
+    setAutomationError(null)
+    try {
+      const res = await fetch(`/api/campaigns/${campaignId}/automation`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`)
+      }
+      setShowAutomationEdit(false)
+      await fetchStatus()
+    } catch (err) {
+      setAutomationError(err instanceof Error ? err.message : 'Erro ao salvar')
+    } finally {
+      setAutomationSaving(false)
+    }
+  }, [campaignId, automationDraft, status, fetchStatus])
+
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
@@ -188,6 +293,7 @@ export default function CampaignProgressPanel({ campaignId, recipientCount, onCl
   const isTerminal = status?.is_terminal ?? false
   const isPaused = currentStatus === 'paused'
   const isSending = currentStatus === 'sending'
+  const hasWorkingHours = automationDraft.working_hours_start !== null && automationDraft.working_hours_end !== null
 
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white shadow-2xl">
@@ -346,6 +452,123 @@ export default function CampaignProgressPanel({ campaignId, recipientCount, onCl
               )}
               Cancelar
             </button>
+            <button
+              onClick={openAutomationEdit}
+              disabled={actionLoading !== null}
+              title="Editar automação"
+              className="flex items-center justify-center rounded-lg border border-zinc-200 p-2 text-zinc-500 hover:bg-zinc-50 hover:text-zinc-700 disabled:opacity-50"
+            >
+              <Settings className="size-4" />
+            </button>
+          </div>
+        )}
+
+        {/* Automation editor */}
+        {showAutomationEdit && (
+          <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Editar automação
+            </p>
+
+            <div className="grid grid-cols-2 gap-3">
+              <label className="space-y-1">
+                <span className="text-xs text-zinc-500">Intervalo (s)</span>
+                <input
+                  type="number" min={10} max={86400}
+                  value={automationDraft.delay_seconds}
+                  onChange={(e) => setAutomationDraft((d) => ({ ...d, delay_seconds: Number(e.target.value) }))}
+                  className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm"
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="text-xs text-zinc-500">Jitter (s)</span>
+                <input
+                  type="number" min={0} max={300}
+                  value={automationDraft.jitter_max}
+                  onChange={(e) => setAutomationDraft((d) => ({ ...d, jitter_max: Number(e.target.value) }))}
+                  className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm"
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="text-xs text-zinc-500">Máx/hora</span>
+                <input
+                  type="number" min={1} max={500}
+                  value={automationDraft.max_per_hour}
+                  onChange={(e) => setAutomationDraft((d) => ({ ...d, max_per_hour: Number(e.target.value) }))}
+                  className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm"
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="text-xs text-zinc-500">Max tentativas</span>
+                <input
+                  type="number" min={0} max={10}
+                  value={automationDraft.max_retries}
+                  onChange={(e) => setAutomationDraft((d) => ({ ...d, max_retries: Number(e.target.value) }))}
+                  className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm"
+                />
+              </label>
+            </div>
+
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-zinc-600">
+              <input
+                type="checkbox"
+                checked={hasWorkingHours}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    setAutomationDraft((d) => ({ ...d, working_hours_start: 8, working_hours_end: 18 }))
+                  } else {
+                    setAutomationDraft((d) => ({ ...d, working_hours_start: null, working_hours_end: null }))
+                  }
+                }}
+                className="rounded"
+              />
+              Restringir horário de envio
+            </label>
+
+            {hasWorkingHours && (
+              <div className="grid grid-cols-2 gap-3">
+                <label className="space-y-1">
+                  <span className="text-xs text-zinc-500">Início (h, 0–23)</span>
+                  <input
+                    type="number" min={0} max={23}
+                    value={automationDraft.working_hours_start ?? 8}
+                    onChange={(e) => setAutomationDraft((d) => ({ ...d, working_hours_start: Number(e.target.value) }))}
+                    className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs text-zinc-500">Fim (h, 0–23)</span>
+                  <input
+                    type="number" min={0} max={23}
+                    value={automationDraft.working_hours_end ?? 18}
+                    onChange={(e) => setAutomationDraft((d) => ({ ...d, working_hours_end: Number(e.target.value) }))}
+                    className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm"
+                  />
+                </label>
+              </div>
+            )}
+
+            {automationError && (
+              <p className="text-xs text-red-600">{automationError}</p>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={handleSaveAutomation}
+                disabled={automationSaving}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-zinc-800 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-700 disabled:opacity-50"
+              >
+                {automationSaving && <Loader2 className="size-3 animate-spin" />}
+                Salvar
+              </button>
+              <button
+                onClick={() => { setShowAutomationEdit(false); setAutomationError(null) }}
+                disabled={automationSaving}
+                className="flex items-center justify-center rounded-lg border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+            </div>
           </div>
         )}
       </div>

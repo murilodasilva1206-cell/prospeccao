@@ -7,8 +7,8 @@ import { getClientIp } from '@/lib/get-ip'
 import { ExportQuerySchema } from '@/lib/schemas'
 import { buildContactsQuery } from '@/lib/query-builder'
 import { maskContact, type PublicEmpresa } from '@/lib/mask-output'
-import { resolveNichoCnae } from '@/lib/nicho-cnae'
-import { requireWorkspaceAuth, authErrorResponse } from '@/lib/whatsapp/auth-middleware'
+import { getCnaeResolverService } from '@/lib/cnae-resolver-service'
+import { requireWorkspaceAuth, authErrorResponse, type AuthContext } from '@/lib/whatsapp/auth-middleware'
 import type { BuscaQuery } from '@/lib/schemas'
 
 // ---------------------------------------------------------------------------
@@ -85,17 +85,46 @@ export async function GET(request: NextRequest) {
     throw err
   }
 
-  // 3. Resolve nicho -> cnae_principal if not explicitly provided
+  // 3. Auth — must precede CNAE resolution (which may call the IBGE API or DB).
+  //    workspace_id is used for audit logging only; estabelecimentos is a public
+  //    CNPJ registry shared across all workspaces — filtering by it would be wrong.
+  let auth: AuthContext
+  {
+    const authClient = await pool.connect()
+    try {
+      auth = await requireWorkspaceAuth(request, authClient)
+    } catch (err) {
+      const res = authErrorResponse(err)
+      if (res) return res
+      log.error({ err }, 'Erro inesperado durante autenticacao em /api/export')
+      return NextResponse.json({ error: 'Erro interno do servidor' }, { status: 500 })
+    } finally {
+      authClient.release()
+    }
+  }
+
+  // 4. Resolve nicho → cnae_principal via the 4-layer cascade
+  //    (LRU cache → cnae_dictionary → static map → IBGE API)
+  //    Safe: only runs after a valid authenticated request.
   let cnae_principal = exportFilters.cnae_principal
   if (exportFilters.nicho && !cnae_principal) {
-    const resolved = resolveNichoCnae(exportFilters.nicho)
+    const resolved = await getCnaeResolverService().resolve(exportFilters.nicho)
     if (resolved) {
       cnae_principal = resolved
       log.debug({ nicho: exportFilters.nicho, cnae: resolved }, 'Nicho resolvido para CNAE em export')
     }
   }
 
-  // 4. Build search filters compatible with the query builder
+  // Guard: nicho was given but couldn't be mapped — reject rather than exporting
+  // the whole table with no sector filter, which produces meaningless results.
+  if (exportFilters.nicho && !cnae_principal) {
+    return NextResponse.json(
+      { error: 'Nicho não reconhecido. Tente um segmento mais específico, como "dentistas" ou "restaurantes".' },
+      { status: 400 },
+    )
+  }
+
+  // 5. Build search filters compatible with the query builder
   const searchFilters: BuscaQuery = {
     uf: exportFilters.uf,
     municipio: exportFilters.municipio,
@@ -113,19 +142,6 @@ export async function GET(request: NextRequest) {
   try {
     const client = await pool.connect()
     try {
-      // Authentication — session cookie (web UI) or Bearer wk_... token (API)
-      // Note: workspace_id is captured for audit logging only.
-      // `estabelecimentos` is a public CNPJ registry shared across all workspaces —
-      // filtering by workspace_id would be incorrect here.
-      let auth
-      try {
-        auth = await requireWorkspaceAuth(request, client)
-      } catch (err) {
-        const res = authErrorResponse(err)
-        if (res) return res
-        throw err
-      }
-
       const { text, values } = buildContactsQuery(searchFilters)
       const result = await client.query(text, values)
       const rows = result.rows.map(maskContact)

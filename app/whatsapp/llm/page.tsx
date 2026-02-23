@@ -5,7 +5,7 @@
 //
 // Allows operators to configure LLM providers (OpenRouter, OpenAI, Anthropic,
 // Google) for the prospecting agent. One profile can be marked as default;
-// that profile is used by /api/agente and /api/busca.
+// that profile is used by /api/agente.
 // ---------------------------------------------------------------------------
 
 import { useEffect, useState } from 'react'

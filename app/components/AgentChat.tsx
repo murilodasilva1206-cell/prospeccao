@@ -27,7 +27,7 @@ import {
   Building2,
 } from 'lucide-react'
 import CampaignWizard from './CampaignWizard'
-import { humanizeSearchResult } from '@/lib/agent-humanizer'
+
 import { useAuth } from '@/app/components/AuthProvider'
 import type { PublicEmpresa } from '@/lib/mask-output'
 
@@ -56,8 +56,7 @@ interface AgentResponse {
   data?: PublicEmpresa[]
   meta?: { total: number; page: number; limit: number; pages: number }
   filters?: Record<string, unknown>
-  // Server-generated narration (ai-narrator.ts); falls back to client-side when absent
-  headline?: string
+  headline?: string  // server-generated narration (ai-narrator.ts)
   subtitle?: string
   hasCta?: boolean
 }
@@ -158,33 +157,19 @@ export default function AgentChat() {
       const data: AgentResponse = await res.json()
 
       if (data.action === 'search' && data.data && data.meta) {
-        const filters = (data.filters ?? {}) as Parameters<typeof humanizeSearchResult>[0]['filters']
+        const filters = data.filters ?? {}
 
-        // Prefer server-generated narration (Narrator LLM); fall back to client-side
-        let headline = data.headline
-        let subtitle = data.subtitle
-        let hasCta = data.hasCta
-        if (!headline || !subtitle) {
-          const fallback = humanizeSearchResult({
-            total: data.meta.total,
-            count: data.data.length,
-            filters,
-            data: data.data,
-          })
-          headline = headline ?? fallback.headline
-          subtitle = subtitle ?? fallback.subtitle
-          hasCta = hasCta ?? fallback.hasCta
-        }
-
+        // Backend always provides headline + subtitle (ai-narrator has its own deterministic fallback).
+        // The || guards against empty strings in case of a backend regression.
         const agentMsg: ChatMessage = {
           id: genId(),
           role: 'agent',
-          text: headline,
-          subtitle,
+          text: data.headline || 'Resultados encontrados.',
+          subtitle: data.subtitle || undefined,
           results: data.data,
           resultsTotal: data.meta.total,
           filters: data.filters,
-          hasCta: hasCta ?? false,
+          hasCta: data.hasCta ?? false,
           nicho: typeof filters.nicho === 'string' ? filters.nicho : undefined,
         }
         setMessages((prev) => [...prev, agentMsg])
@@ -192,11 +177,7 @@ export default function AgentChat() {
         const agentMsg: ChatMessage = {
           id: genId(),
           role: 'agent',
-          text:
-            data.message ??
-            (data.action === 'export'
-              ? 'Pronto! Use o botao de exportacao para baixar os dados.'
-              : 'Nao entendi. Tente descrever quem voce procura, por exemplo: "clinicas em Sao Paulo com telefone".'),
+          text: data.message ?? 'Nao foi possivel processar sua solicitacao.',
         }
         setMessages((prev) => [...prev, agentMsg])
       }

@@ -36,6 +36,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ data: profiles })
   } catch (err) {
     if (err instanceof AuthError) return NextResponse.json({ error: err.message }, { status: 401 })
+    if ((err as { code?: string }).code === '42P01') {
+      return NextResponse.json({ error: 'Tabela llm_profiles não encontrada. Execute a migration 015.' }, { status: 500 })
+    }
     log.error({ err }, 'GET /api/llm/profiles error')
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   } finally {
@@ -73,6 +76,9 @@ export async function POST(request: NextRequest) {
     // Unique constraint: duplicate name
     if (err instanceof Error && err.message.includes('unique')) {
       return NextResponse.json({ error: 'Já existe um perfil com esse nome neste workspace' }, { status: 409 })
+    }
+    if ((err as { code?: string }).code === '42P01') {
+      return NextResponse.json({ error: 'Tabela llm_profiles não encontrada. Execute a migration 015.' }, { status: 500 })
     }
     log.error({ err }, 'POST /api/llm/profiles error')
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

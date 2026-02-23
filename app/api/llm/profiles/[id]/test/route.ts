@@ -61,6 +61,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
   } catch (err) {
     if (err instanceof AuthError) return NextResponse.json({ error: err.message }, { status: 401 })
+    if ((err as { code?: string }).code === '42P01') {
+      return NextResponse.json({ error: 'Tabela llm_profiles não encontrada. Execute a migration 015.' }, { status: 500 })
+    }
     log.error({ err }, 'POST /api/llm/profiles/:id/test error')
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   } finally {

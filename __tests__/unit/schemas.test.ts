@@ -166,6 +166,27 @@ describe('AgentIntentSchema', () => {
   it('rejects missing confidence field', () => {
     expect(() => AgentIntentSchema.parse({ action: 'search' })).toThrow()
   })
+
+  it('rejects clarify without message (discriminated union requires it)', () => {
+    expect(() =>
+      AgentIntentSchema.parse({ action: 'clarify', confidence: 0.9 })
+    ).toThrow()
+  })
+
+  it('rejects reject without message (discriminated union requires it)', () => {
+    expect(() =>
+      AgentIntentSchema.parse({ action: 'reject', confidence: 0.9 })
+    ).toThrow()
+  })
+
+  it('accepts search without message (message optional for search/export)', () => {
+    expect(() =>
+      AgentIntentSchema.parse({ action: 'search', confidence: 0.9 })
+    ).not.toThrow()
+    expect(() =>
+      AgentIntentSchema.parse({ action: 'export', confidence: 0.9 })
+    ).not.toThrow()
+  })
 })
 
 describe('ExportQuerySchema', () => {

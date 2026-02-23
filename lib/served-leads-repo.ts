@@ -29,15 +29,24 @@ export interface ServedLeadsFilters {
 }
 
 /**
+ * Strips diacritics (accents) from a string, then lowercases and trims it.
+ * Ensures "São Paulo" and "Sao Paulo" produce the same fingerprint.
+ */
+function normalizeText(s: string): string {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
+}
+
+/**
  * Builds a stable SHA-256 fingerprint for a set of search filters.
- * The canonical form is sorted and lowercased to tolerate minor variations.
+ * The canonical form is sorted, accent-normalized, and lowercased so that
+ * minor phrasing variations ("São Paulo" vs "Sao Paulo") share one pool.
  */
 export function buildQueryFingerprint(filters: ServedLeadsFilters): string {
   const canonical = JSON.stringify({
     uf:                 filters.uf?.toUpperCase() ?? null,
-    municipio:          filters.municipio?.toLowerCase().trim() ?? null,
+    municipio:          filters.municipio ? normalizeText(filters.municipio) : null,
     cnae_principal:     filters.cnae_principal ?? null,
-    nicho:              filters.nicho?.toLowerCase().trim() ?? null,
+    nicho:              filters.nicho ? normalizeText(filters.nicho) : null,
     situacao_cadastral: filters.situacao_cadastral ?? null,
   })
   return createHash('sha256').update(canonical).digest('hex')

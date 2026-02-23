@@ -92,12 +92,18 @@ export type ExportQuery = z.infer<typeof ExportQuerySchema>
 // ---------------------------------------------------------------------------
 // AI response contract — validate before using any field from the AI
 // ---------------------------------------------------------------------------
-export const AgentIntentSchema = z.object({
-  action: z.enum(['search', 'export', 'clarify', 'reject']),
-  filters: BuscaQuerySchema.partial().optional(),
+// Base fields shared by all intent variants
+const _AgentIntentBase = z.object({
+  filters:    BuscaQuerySchema.partial().optional(),
   confidence: z.number().min(0).max(1),
-  message: SafeString(500).optional(), // only for clarify/reject actions
 })
+
+export const AgentIntentSchema = z.discriminatedUnion('action', [
+  _AgentIntentBase.extend({ action: z.literal('search'),  message: SafeString(500).optional() }),
+  _AgentIntentBase.extend({ action: z.literal('export'),  message: SafeString(500).optional() }),
+  _AgentIntentBase.extend({ action: z.literal('clarify'), message: SafeString(500) }),
+  _AgentIntentBase.extend({ action: z.literal('reject'),  message: SafeString(500) }),
+])
 
 export type AgentIntent = z.infer<typeof AgentIntentSchema>
 
