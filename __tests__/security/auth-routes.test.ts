@@ -83,7 +83,7 @@ import { POST as loginRoute } from '@/app/api/auth/login/route'
 import { POST as logoutRoute } from '@/app/api/auth/logout/route'
 import { GET as meRoute } from '@/app/api/auth/me/route'
 import { POST as registerRoute } from '@/app/api/auth/register/route'
-import { safeRedirect } from '@/app/login/page'
+import { safeRedirect } from '@/app/login/LoginPageClient'
 
 // ---------------------------------------------------------------------------
 // Helpers
