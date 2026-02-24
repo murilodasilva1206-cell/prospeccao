@@ -267,6 +267,23 @@ POST   /api/campaigns/process      → processamento por cron (auth via CRON_SEC
 
 **Maquina de estados:** `draft → awaiting_confirmation → awaiting_channel → awaiting_message → ready_to_send → sending ↔ paused → completed / completed_with_errors / cancelled`
 
+### Agendamento de campanhas (Vercel Hobby)
+
+No plano Hobby da Vercel, cron por minuto nao esta disponivel.
+Use GitHub Actions (`.github/workflows/campaign-cron.yml`) para chamar a rota a cada minuto:
+
+```
+POST /api/campaigns/process
+Authorization: Bearer <CRON_SECRET>
+```
+
+Secrets necessarios no repositorio GitHub (**Settings → Secrets → Actions**):
+
+| Secret | Valor |
+|--------|-------|
+| `APP_URL` | `https://seu-projeto.vercel.app` (sem `/` no final) |
+| `CRON_SECRET` | Mesmo valor configurado na Vercel |
+
 **Automacao configuravel em tempo real** via `PATCH /automation` (campos opcionais, so altera o que for enviado):
 - `delay_seconds` (≥ 10): intervalo entre envios
 - `jitter_max` (≥ 0): variacao aleatoria adicional em segundos

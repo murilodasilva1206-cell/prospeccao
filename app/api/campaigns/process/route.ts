@@ -1,4 +1,4 @@
-// POST /api/campaigns/process — Vercel Cron worker (fires every minute)
+// POST /api/campaigns/process — campaign scheduler worker (Vercel Cron or external scheduler, e.g. GitHub Actions)
 //
 // Finds all campaigns in 'sending' state whose next_send_at has elapsed and
 // processes them autonomously — no browser presence required.
