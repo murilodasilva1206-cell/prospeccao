@@ -1,8 +1,1 @@
-{
-  "crons": [
-    {
-      "path": "/api/campaigns/process",
-      "schedule": "* * * * *"
-    }
-  ]
-}
+{}

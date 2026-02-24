@@ -1,0 +1,23 @@
+name: Campaign processor (per-minute cron)
+
+on:
+  schedule:
+    - cron: '* * * * *'
+  workflow_dispatch:
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Call /api/campaigns/process
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "${{ secrets.APP_URL }}/api/campaigns/process" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json")
+          echo "HTTP status: $STATUS"
+          case "$STATUS" in
+            2*) exit 0 ;;
+            *)  echo "::error::Campaign processor returned HTTP $STATUS"; exit 1 ;;
+          esac
