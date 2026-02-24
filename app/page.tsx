@@ -69,7 +69,7 @@ POST /api/agente
 { "message": "Restaurantes no Rio de Janeiro com e-mail" }
 
 # Exportar para CSV
-GET /api/export?uf=MG&situacao_cadastral=ATIVA&maxRows=1000
+GET /api/export?uf=MG&situacao_cadastral=02&maxRows=1000
 
 # Gerenciar modulo WhatsApp
 GET /whatsapp`}

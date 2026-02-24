@@ -189,7 +189,7 @@ export async function POST(request: NextRequest) {
     municipio: rawFilters.municipio,
     cnae_principal: rawFilters.cnae_principal,
     nicho: rawFilters.nicho,
-    situacao_cadastral: rawFilters.situacao_cadastral ?? 'ATIVA',
+    situacao_cadastral: rawFilters.situacao_cadastral ?? '02',
     tem_telefone: rawFilters.tem_telefone,
     tem_email: rawFilters.tem_email,
     orderBy: rawFilters.orderBy ?? 'contato_priority',

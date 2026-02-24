@@ -7,16 +7,22 @@ interface QueryResult {
 
 // ---------------------------------------------------------------------------
 // SECURITY CONTRACT: All user-supplied values use $N parameterized placeholders.
-// The only fields interpolated directly into SQL text are `orderBy` and `orderDir`,
-// which are validated against a z.enum() whitelist in the schema — they can
-// never be arbitrary user strings. SQL identifiers cannot be parameterized.
+// The only fields interpolated directly into SQL text are `orderBy`, `orderDir`,
+// and TABLE — all are either z.enum()-validated or a hardcoded constant.
 // 'contato_priority' is a virtual sentinel handled as a CASE expression here,
 // never passed as a raw column name into SQL.
 // ---------------------------------------------------------------------------
 
-// Table: cnpj_completo (Receita Federal public CNPJ registry)
-// Relevant columns: cnpj_completo, razao_social, nome_fantasia, uf, municipio,
-//   cnae_principal, situacao_cadastral, telefone1, telefone2, correio_eletronico
+// Single source of truth for the table name — change here if the DB schema evolves.
+const TABLE = 'cnpj_completo'
+
+// Table columns used here:
+//   cnpj_completo, razao_social, nome_fantasia, uf, municipio,
+//   cnae_principal (digits only in the DB, e.g. '8630504'),
+//   situacao_cadastral (RF numeric code: '01'–'08'),
+//   ddd1, ddd2 (aliased as telefone1/telefone2 — no separate telefoneN column),
+//   correio_eletronico,
+//   tem_telefone (boolean), tem_email (boolean)
 
 // CountFilters — all filter fields optional; pagination/ordering not needed for COUNT
 export type CountFilters = Partial<
@@ -44,33 +50,35 @@ function buildConditions(
     paramIndex++
   }
   if (filters.cnae_principal) {
-    conditions.push(`cnae_principal = $${paramIndex}`) // exact CNAE code
+    // Normalise both stored code and user input by stripping non-digits so that
+    // '8630-5/04', '8630504', and '863050/4' all resolve to the same digits and
+    // match the same records. The $N parameter holds the raw user value; the
+    // regexp_replace is applied to both sides inside PostgreSQL.
+    conditions.push(
+      `regexp_replace(cnae_principal, '[^0-9]', '', 'g') ILIKE '%' || regexp_replace($${paramIndex}::text, '[^0-9]', '', 'g') || '%'`,
+    )
     values.push(filters.cnae_principal)
     paramIndex++
   }
   if (filters.situacao_cadastral) {
-    conditions.push(`situacao_cadastral = $${paramIndex}`)
+    conditions.push(`situacao_cadastral = $${paramIndex}`) // exact RF numeric code ('02', etc.)
     values.push(filters.situacao_cadastral)
     paramIndex++
   }
 
-  // telefone1 OR telefone2 — either field satisfies "has phone"
+  // tem_telefone and tem_email are dedicated boolean columns in the RF schema
   if (filters.tem_telefone === true) {
-    conditions.push(
-      `(telefone1 IS NOT NULL AND telefone1 <> '') OR (telefone2 IS NOT NULL AND telefone2 <> '')`,
-    )
+    conditions.push(`tem_telefone = true`)
   }
   if (filters.tem_telefone === false) {
-    conditions.push(
-      `(telefone1 IS NULL OR telefone1 = '') AND (telefone2 IS NULL OR telefone2 = '')`,
-    )
+    conditions.push(`tem_telefone = false`)
   }
 
   if (filters.tem_email === true) {
-    conditions.push(`correio_eletronico IS NOT NULL AND correio_eletronico <> ''`)
+    conditions.push(`tem_email = true`)
   }
   if (filters.tem_email === false) {
-    conditions.push(`(correio_eletronico IS NULL OR correio_eletronico = '')`)
+    conditions.push(`tem_email = false`)
   }
 
   return { conditions, values }
@@ -89,14 +97,16 @@ export function buildContactsQuery(filters: BuscaQuery): QueryResult {
   // so OFFSET-based pagination is deterministic even when primary sort keys tie.
   const orderExpression =
     filters.orderBy === 'contato_priority'
-      ? `(CASE WHEN (telefone1 IS NOT NULL AND telefone1 <> '') OR (telefone2 IS NOT NULL AND telefone2 <> '') THEN 0 ELSE 1 END) ASC, (CASE WHEN correio_eletronico IS NOT NULL AND correio_eletronico <> '' THEN 0 ELSE 1 END) ASC, razao_social ${filters.orderDir}, cnpj_completo ASC`
+      ? `(CASE WHEN tem_telefone THEN 0 ELSE 1 END) ASC, (CASE WHEN tem_email THEN 0 ELSE 1 END) ASC, razao_social ${filters.orderDir}, cnpj_completo ASC`
       : `${filters.orderBy} ${filters.orderDir}, cnpj_completo ASC`
   const orderClause = `ORDER BY ${orderExpression}`
 
   const offset = (filters.page - 1) * filters.limit
   const paramIndex = values.length + 1
 
-  // LIMIT and OFFSET are also parameterized
+  // LIMIT and OFFSET are also parameterized.
+  // ddd1/ddd2 aliased as telefone1/telefone2 — the RF schema has no separate
+  // telefoneN column; the area code (DDD) and number are stored in separate fields.
   const text = `
     SELECT
       cnpj_completo,
@@ -106,10 +116,10 @@ export function buildContactsQuery(filters: BuscaQuery): QueryResult {
       municipio,
       cnae_principal,
       situacao_cadastral,
-      telefone1,
-      telefone2,
+      ddd1::text AS telefone1,
+      ddd2::text AS telefone2,
       correio_eletronico
-    FROM cnpj_completo
+    FROM ${TABLE}
     ${where}
     ${orderClause}
     LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
@@ -127,7 +137,7 @@ export function buildCountQuery(filters: CountFilters): QueryResult {
     conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
   return {
-    text: `SELECT COUNT(*) AS total FROM cnpj_completo ${where}`,
+    text: `SELECT COUNT(*) AS total FROM ${TABLE} ${where}`,
     values,
   }
 }

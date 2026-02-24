@@ -7,7 +7,7 @@ describe('BuscaQuerySchema', () => {
       uf: 'SP',
       municipio: 'Sao Paulo',
       cnae_principal: '8630-5/04',
-      situacao_cadastral: 'ATIVA',
+      situacao_cadastral: '02',
       tem_telefone: 'true',
       tem_email: 'false',
       orderBy: 'razao_social',
@@ -18,7 +18,7 @@ describe('BuscaQuerySchema', () => {
     expect(result.uf).toBe('SP')
     expect(result.municipio).toBe('Sao Paulo')
     expect(result.cnae_principal).toBe('8630-5/04')
-    expect(result.situacao_cadastral).toBe('ATIVA')
+    expect(result.situacao_cadastral).toBe('02')
     expect(result.tem_telefone).toBe(true)
     expect(result.tem_email).toBe(false)
     expect(result.limit).toBe(20)
@@ -30,7 +30,7 @@ describe('BuscaQuerySchema', () => {
     expect(result.limit).toBe(20)
     expect(result.orderBy).toBe('contato_priority')
     expect(result.orderDir).toBe('asc')
-    expect(result.situacao_cadastral).toBe('ATIVA')
+    expect(result.situacao_cadastral).toBe('02')
   })
 
   it('caps limit at 100', () => {
@@ -79,11 +79,13 @@ describe('BuscaQuerySchema', () => {
   })
 
   it('rejects invalid situacao_cadastral', () => {
+    expect(() => BuscaQuerySchema.parse({ situacao_cadastral: 'ATIVA' })).toThrow()
     expect(() => BuscaQuerySchema.parse({ situacao_cadastral: 'ATIVA_SPECIAL' })).toThrow()
   })
 
-  it('accepts all valid situacao_cadastral values', () => {
-    for (const val of ['ATIVA', 'BAIXADA', 'INAPTA', 'SUSPENSA']) {
+  it('accepts all valid situacao_cadastral RF codes', () => {
+    // 01=Nula 02=Ativa 03=Suspensa 04=Inapta 08=Baixada
+    for (const val of ['01', '02', '03', '04', '08']) {
       expect(() => BuscaQuerySchema.parse({ situacao_cadastral: val })).not.toThrow()
     }
   })
@@ -212,7 +214,7 @@ describe('ExportQuerySchema', () => {
     const result = ExportQuerySchema.parse({
       uf: 'MG',
       cnae_principal: '9313-1/00',
-      situacao_cadastral: 'ATIVA',
+      situacao_cadastral: '02',
       tem_telefone: 'true',
     })
     expect(result.uf).toBe('MG')

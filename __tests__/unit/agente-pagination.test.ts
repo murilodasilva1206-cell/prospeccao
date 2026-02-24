@@ -105,7 +105,7 @@ function makeRow(cnpj: string) {
     uf:                 'SP',
     municipio:          'SAO PAULO',
     cnae_principal:     '8630-5/04',
-    situacao_cadastral: 'ATIVA',
+    situacao_cadastral: '02',
     telefone1:          '11999990000',
     telefone2:          null,
     correio_eletronico: null,

@@ -24,7 +24,7 @@ CAMPOS DO BANCO DE DADOS:
 - municipio: nome do município (ex: "São Paulo", "Belo Horizonte")
 - cnae_principal: código CNAE da atividade principal (ex: "8630-5/04" = clínicas odontológicas)
 - nicho: texto livre que será mapeado para CNAE (ex: "dentistas", "restaurantes", "academias")
-- situacao_cadastral: situação na Receita Federal — "ATIVA" | "BAIXADA" | "INAPTA" | "SUSPENSA" (padrão: "ATIVA")
+- situacao_cadastral: código de situação na Receita Federal — "01" (Nula) | "02" (Ativa) | "03" (Suspensa) | "04" (Inapta) | "08" (Baixada) — padrão: "02" (Ativa)
 - tem_telefone: true para buscar apenas empresas com telefone cadastrado
 - tem_email: true para buscar apenas empresas com e-mail cadastrado
 
@@ -36,7 +36,7 @@ SCHEMA DE RESPOSTA (JSON estrito, sem campos extras, sem markdown):
     "municipio"?: string,
     "cnae_principal"?: string (código CNAE exato),
     "nicho"?: string (texto do setor quando não souber o código CNAE),
-    "situacao_cadastral"?: "ATIVA" | "BAIXADA" | "INAPTA" | "SUSPENSA",
+    "situacao_cadastral"?: "01" | "02" | "03" | "04" | "08",
     "tem_telefone"?: boolean,
     "tem_email"?: boolean
   },

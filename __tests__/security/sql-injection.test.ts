@@ -33,7 +33,7 @@ const baseFilters: BuscaQuery = {
   limit: 20,
   orderBy: 'razao_social',
   orderDir: 'asc',
-  situacao_cadastral: 'ATIVA',
+  situacao_cadastral: '02',
 }
 
 describe('SQL Injection — schema validation layer', () => {

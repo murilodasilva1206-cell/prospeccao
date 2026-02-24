@@ -8,22 +8,25 @@ const baseFilters: BuscaQuery = {
   limit: 20,
   orderBy: 'razao_social',
   orderDir: 'asc',
-  situacao_cadastral: 'ATIVA',
+  situacao_cadastral: '02',
 }
 
 describe('buildContactsQuery', () => {
-  it('targets the estabelecimentos table, not contacts', () => {
+  it('targets the cnpj_completo table', () => {
     const { text } = buildContactsQuery(baseFilters)
-    expect(text).toContain('estabelecimentos')
+    expect(text).toContain('cnpj_completo')
     expect(text).not.toContain('contacts')
   })
 
-  it('selects CNPJ registry columns', () => {
+  it('selects CNPJ registry columns with ddd aliases', () => {
     const { text } = buildContactsQuery(baseFilters)
     expect(text).toContain('cnpj_completo')
     expect(text).toContain('razao_social')
-    expect(text).toContain('telefone1')
+    expect(text).toMatch(/ddd1::text\s+AS\s+telefone1/i)
+    expect(text).toMatch(/ddd2::text\s+AS\s+telefone2/i)
     expect(text).toContain('correio_eletronico')
+    // raw ddd1/ddd2 must not appear un-aliased
+    expect(text).not.toMatch(/,\s*ddd1\s*,/)
   })
 
   it('uses exact match for uf — no wildcard', () => {
@@ -40,25 +43,30 @@ describe('buildContactsQuery', () => {
     expect(values).toContain(`%${payload}%`)
   })
 
-  it('uses exact match for cnae_principal', () => {
+  it('normalizes CNAE via regexp_replace so dashes and slashes are ignored', () => {
     const { text, values } = buildContactsQuery({ ...baseFilters, cnae_principal: '8630-5/04' })
-    expect(text).toMatch(/cnae_principal\s*=\s*\$\d+/i)
+    // Both sides stripped of non-digits — '8630-5/04' and '8630504' match the same record
+    expect(text).toMatch(/regexp_replace\(cnae_principal/i)
+    expect(text).toMatch(/regexp_replace\(\$\d+::text/i)
+    // Raw user value is still parameterized (never interpolated into SQL text)
     expect(values).toContain('8630-5/04')
+    expect(text).not.toContain('8630-5/04')
   })
 
-  it('adds telefone1 IS NOT NULL for tem_telefone=true', () => {
-    const { text } = buildContactsQuery({ ...baseFilters, tem_telefone: true })
-    expect(text).toMatch(/telefone1\s+IS\s+NOT\s+NULL/i)
+  it('filters tem_telefone using the boolean column', () => {
+    const { text: tTrue } = buildContactsQuery({ ...baseFilters, tem_telefone: true })
+    expect(tTrue).toMatch(/tem_telefone\s*=\s*true/i)
+
+    const { text: tFalse } = buildContactsQuery({ ...baseFilters, tem_telefone: false })
+    expect(tFalse).toMatch(/tem_telefone\s*=\s*false/i)
   })
 
-  it('adds telefone1 IS NULL for tem_telefone=false', () => {
-    const { text } = buildContactsQuery({ ...baseFilters, tem_telefone: false })
-    expect(text).toMatch(/telefone1\s+IS\s+NULL/i)
-  })
+  it('filters tem_email using the boolean column', () => {
+    const { text: tTrue } = buildContactsQuery({ ...baseFilters, tem_email: true })
+    expect(tTrue).toMatch(/tem_email\s*=\s*true/i)
 
-  it('adds correio_eletronico IS NOT NULL for tem_email=true', () => {
-    const { text } = buildContactsQuery({ ...baseFilters, tem_email: true })
-    expect(text).toMatch(/correio_eletronico\s+IS\s+NOT\s+NULL/i)
+    const { text: tFalse } = buildContactsQuery({ ...baseFilters, tem_email: false })
+    expect(tFalse).toMatch(/tem_email\s*=\s*false/i)
   })
 
   it('numbers placeholders correctly with multiple string filters', () => {
@@ -68,10 +76,11 @@ describe('buildContactsQuery', () => {
       municipio: 'Campinas',
       cnae_principal: '8630-5/04',
     })
-    expect(text).toContain('$1')
-    expect(text).toContain('$2')
-    expect(text).toContain('$3')
-    // uf + municipio + cnae_principal + situacao_cadastral + LIMIT + OFFSET = 6 values
+    expect(text).toContain('$1') // uf
+    expect(text).toContain('$2') // municipio wildcard
+    expect(text).toContain('$3') // cnae_principal (raw value, normalized in SQL)
+    expect(text).toContain('$4') // situacao_cadastral from baseFilters
+    // uf + municipio + cnae_principal + situacao_cadastral + LIMIT + OFFSET = 6 params
     expect(values).toHaveLength(6)
   })
 
@@ -122,10 +131,10 @@ describe('buildContactsQuery', () => {
 })
 
 describe('buildCountQuery', () => {
-  it('returns a COUNT query targeting estabelecimentos', () => {
+  it('returns a COUNT query targeting cnpj_completo', () => {
     const { text } = buildCountQuery({})
     expect(text).toMatch(/COUNT\(\*\)/i)
-    expect(text).toContain('estabelecimentos')
+    expect(text).toContain('cnpj_completo')
   })
 
   it('uses parameterized value for uf filter', () => {

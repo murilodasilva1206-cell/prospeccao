@@ -19,7 +19,7 @@ function makeEmpresa(overrides: Partial<PublicEmpresa> = {}): PublicEmpresa {
     uf: 'SP',
     municipio: 'SAO PAULO',
     cnaePrincipal: '8630-5/04',
-    situacao: 'ATIVA',
+    situacao: '02',
     telefone1: '11999990000',
     telefone2: '',
     email: 'contato@odonto.com',

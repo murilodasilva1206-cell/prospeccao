@@ -26,7 +26,7 @@ Busca empresas com filtros. Retorna JSON paginado.
 | `municipio`         | string  | `São Paulo`      | Nome do municipio (busca parcial)              |
 | `cnae_principal`    | string  | `8630-5/04`      | Codigo CNAE exato                              |
 | `nicho`             | string  | `clinicas`       | Texto livre → mapeado para CNAE                |
-| `situacao_cadastral`| enum    | `ATIVA`          | `ATIVA`, `BAIXADA`, `INAPTA`, `SUSPENSA`       |
+| `situacao_cadastral`| enum    | `02`             | `01` Nula, `02` Ativa, `03` Suspensa, `04` Inapta, `08` Baixada |
 | `tem_telefone`      | boolean | `true`           | Filtra por presenca de telefone                |
 | `tem_email`         | boolean | `true`           | Filtra por presenca de e-mail                  |
 | `orderBy`           | enum    | `razao_social`   | `razao_social`, `municipio`, `cnpj_completo`   |
@@ -50,7 +50,7 @@ GET /api/busca?uf=SP&cnae_principal=8630-5%2F04&tem_telefone=true&limit=10
       "uf": "SP",
       "municipio": "SAO PAULO",
       "cnaePrincipal": "8630-5/04",
-      "situacao": "ATIVA",
+      "situacao": "02",
       "telefone1": "11999990000",
       "telefone2": "",
       "email": "contato@odonto.com"
@@ -81,7 +81,7 @@ Exporta empresas em CSV. Mesmos filtros de `/api/busca` mais `maxRows`.
 
 **Exemplo:**
 ```
-GET /api/export?uf=MG&situacao_cadastral=ATIVA&maxRows=500
+GET /api/export?uf=MG&situacao_cadastral=02&maxRows=500
 ```
 
 **Resposta:** arquivo `empresas.csv` com colunas:
@@ -317,17 +317,19 @@ Secrets necessarios no repositorio GitHub (**Settings → Secrets → Actions**)
 Tabela esperada: `estabelecimentos` (subset do cadastro publico CNPJ).
 
 ```sql
-CREATE TABLE estabelecimentos (
+CREATE TABLE cnpj_completo (
   cnpj_completo       VARCHAR(14) PRIMARY KEY,
   razao_social        TEXT NOT NULL,
   nome_fantasia       TEXT,
   uf                  CHAR(2) NOT NULL,
   municipio           TEXT NOT NULL,
   cnae_principal      VARCHAR(20),
-  situacao_cadastral  VARCHAR(20) NOT NULL DEFAULT 'ATIVA',
-  telefone1           VARCHAR(30),
-  telefone2           VARCHAR(30),
-  correio_eletronico  VARCHAR(115)
+  situacao_cadastral  VARCHAR(2) NOT NULL DEFAULT '02', -- '01' Nula | '02' Ativa | '03' Suspensa | '04' Inapta | '08' Baixada
+  ddd1                VARCHAR(2),
+  ddd2                VARCHAR(2),
+  correio_eletronico  VARCHAR(115),
+  tem_telefone        BOOLEAN NOT NULL DEFAULT false,
+  tem_email           BOOLEAN NOT NULL DEFAULT false
 );
 ```
 

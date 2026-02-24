@@ -8,7 +8,7 @@ const makeRow = (overrides: Partial<EmpresaRow> = {}): EmpresaRow => ({
   uf: 'SP',
   municipio: 'SAO PAULO',
   cnae_principal: '8630-5/04',
-  situacao_cadastral: 'ATIVA',
+  situacao_cadastral: '02',
   telefone1: '11999990000',
   telefone2: null,
   correio_eletronico: 'contato@odonto.com',
@@ -48,7 +48,7 @@ describe('maskContact', () => {
 
   it('maps situacao_cadastral to situacao', () => {
     const result = maskContact(makeRow())
-    expect(result.situacao).toBe('ATIVA')
+    expect(result.situacao).toBe('02')
   })
 
   it('defaults null telefone1 to empty string', () => {
@@ -81,7 +81,7 @@ describe('maskContact', () => {
     expect(result.uf).toBe('SP')
     expect(result.municipio).toBe('SAO PAULO')
     expect(result.cnaePrincipal).toBe('8630-5/04')
-    expect(result.situacao).toBe('ATIVA')
+    expect(result.situacao).toBe('02')
     expect(result.telefone1).toBe('11999990000')
     expect(result.telefone2).toBe('')
     expect(result.email).toBe('contato@odonto.com')

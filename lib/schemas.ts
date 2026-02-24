@@ -37,10 +37,11 @@ export const BuscaQuerySchema = PaginationSchema.extend({
   cnae_principal: SafeString(20).optional(),                   // e.g. "8630-5/04"
   nicho: SafeString(100).optional(),                           // texto livre → mapeado para CNAE
 
-  // Status cadastral (Receita Federal)
+  // Status cadastral — códigos numéricos da Receita Federal:
+  // '01' Nula  '02' Ativa  '03' Suspensa  '04' Inapta  '08' Baixada
   situacao_cadastral: z
-    .enum(['ATIVA', 'BAIXADA', 'INAPTA', 'SUSPENSA'])
-    .default('ATIVA'),
+    .enum(['01', '02', '03', '04', '08'])
+    .default('02'),
 
   // Filtros de contato disponível
   tem_telefone: QueryBoolean,
@@ -74,9 +75,11 @@ export const ExportQuerySchema = z.object({
   municipio: SafeString(150).optional(),
   cnae_principal: SafeString(20).optional(),
   nicho: SafeString(100).optional(),
+  // Status cadastral — códigos numéricos da Receita Federal:
+  // '01' Nula  '02' Ativa  '03' Suspensa  '04' Inapta  '08' Baixada
   situacao_cadastral: z
-    .enum(['ATIVA', 'BAIXADA', 'INAPTA', 'SUSPENSA'])
-    .default('ATIVA'),
+    .enum(['01', '02', '03', '04', '08'])
+    .default('02'),
   tem_telefone: QueryBoolean,
   tem_email: QueryBoolean,
   orderBy: z
