@@ -14,7 +14,7 @@ interface QueryResult {
 // never passed as a raw column name into SQL.
 // ---------------------------------------------------------------------------
 
-// Table: estabelecimentos (Receita Federal public CNPJ registry)
+// Table: cnpj_completo (Receita Federal public CNPJ registry)
 // Relevant columns: cnpj_completo, razao_social, nome_fantasia, uf, municipio,
 //   cnae_principal, situacao_cadastral, telefone1, telefone2, correio_eletronico
 
@@ -109,7 +109,7 @@ export function buildContactsQuery(filters: BuscaQuery): QueryResult {
       telefone1,
       telefone2,
       correio_eletronico
-    FROM estabelecimentos
+    FROM cnpj_completo
     ${where}
     ${orderClause}
     LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
@@ -127,7 +127,7 @@ export function buildCountQuery(filters: CountFilters): QueryResult {
     conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
   return {
-    text: `SELECT COUNT(*) AS total FROM estabelecimentos ${where}`,
+    text: `SELECT COUNT(*) AS total FROM cnpj_completo ${where}`,
     values,
   }
 }

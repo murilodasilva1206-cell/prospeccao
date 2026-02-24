@@ -10,7 +10,7 @@
 // registry — these fields are public data, not PII in this context.
 // ---------------------------------------------------------------------------
 
-/** Raw row from estabelecimentos table as returned by pg */
+/** Raw row from cnpj_completo table as returned by pg */
 export interface EmpresaRow {
   cnpj_completo: string
   razao_social: string

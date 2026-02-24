@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
   }
 
   // 3. Auth — must precede CNAE resolution (which may call the IBGE API or DB).
-  //    workspace_id is used for audit logging only; estabelecimentos is a public
+  //    workspace_id is used for audit logging only; cnpj_completo is a public
   //    CNPJ registry shared across all workspaces — filtering by it would be wrong.
   let auth: AuthContext
   {
