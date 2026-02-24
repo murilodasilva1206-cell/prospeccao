@@ -1,72 +1,9 @@
-import { z } from 'zod'
+// Runtime environment validation.
+// Imports the pure schema from lib/env-schema.ts, parses process.env once at
+// module load time, and exits with a descriptive error if any required variable
+// is missing or invalid. All other modules import `env` from here.
 
-const EnvSchema = z.object({
-  DB_HOST: z.string().min(1, 'DB_HOST is required'),
-  DB_PORT: z.coerce.number().int().min(1).max(65535).default(5432),
-  DB_NAME: z.string().min(1, 'DB_NAME is required'),
-  DB_USER: z.string().min(1, 'DB_USER is required'),
-  DB_PASSWORD: z.string().min(8, 'DB_PASSWORD must be at least 8 characters'),
-  // Optional in production — each workspace configures its own LLM profile.
-  // In development, a global fallback key can be set here for convenience.
-  // The runtime gate (409 LLM_PROFILE_REQUIRED) handles the production case.
-  OPENROUTER_API_KEY: z
-    .string()
-    .refine((v) => !v || v.startsWith('sk-or-'), {
-      message: 'OPENROUTER_API_KEY must start with sk-or- (when set)',
-    })
-    .default(''),
-  OPENROUTER_MODEL: z.string().min(1).default('anthropic/claude-3.5-sonnet'),
-  NODE_ENV: z
-    .enum(['development', 'production', 'test'])
-    .default('development'),
-  // How long (in minutes) a 'processing' lease is held before it can be
-  // re-claimed by another worker after a crash or timeout.
-  CAMPAIGN_LEASE_TIMEOUT_MINUTES: z.coerce.number().int().min(1).max(120).default(10),
-
-  // AES-256-GCM key for encrypting WhatsApp channel credentials at rest.
-  // Must be exactly 64 hex characters (= 32 bytes = 256 bits).
-  CREDENTIALS_ENCRYPTION_KEY: z
-    .string()
-    .length(64, 'CREDENTIALS_ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes)')
-    .regex(/^[0-9a-fA-F]{64}$/, 'CREDENTIALS_ENCRYPTION_KEY must be a valid hex string'),
-
-  // Secret used to authenticate Vercel Cron calls to POST /api/campaigns/process.
-  // Must be at least 32 characters. Optional — when absent the cron endpoint
-  // returns 503 so the app can still start in development without it.
-  CRON_SECRET: z.string().min(32).optional(),
-
-  // ---------------------------------------------------------------------------
-  // S3-compatible media storage (AWS S3 or Cloudflare R2)
-  //
-  // Set MEDIA_STORAGE_ENABLED=true to activate the media pipeline.
-  // When false (default), the app starts without S3 credentials; media routes
-  // respond with a controlled 503 instead of crashing at startup.
-  // ---------------------------------------------------------------------------
-  MEDIA_STORAGE_ENABLED: z
-    .enum(['true', 'false'])
-    .default('false')
-    .transform((v) => v === 'true'),
-
-  // Required only when MEDIA_STORAGE_ENABLED=true (validated via superRefine below)
-  S3_BUCKET: z.string().optional(),
-  S3_ACCESS_KEY_ID: z.string().optional(),
-  S3_SECRET_ACCESS_KEY: z.string().optional(),
-  S3_REGION: z.string().optional(),
-  // Optional: set for Cloudflare R2 or custom S3-compatible endpoints
-  S3_ENDPOINT: z.string().url().optional(),
-}).superRefine((data, ctx) => {
-  if (!data.MEDIA_STORAGE_ENABLED) return
-  const required: Array<keyof typeof data> = ['S3_BUCKET', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY', 'S3_REGION']
-  for (const key of required) {
-    if (!data[key]) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: [key],
-        message: `${key} is required when MEDIA_STORAGE_ENABLED=true`,
-      })
-    }
-  }
-})
+import { EnvSchema } from './env-schema'
 
 // parse() throws ZodError at module load time if any required var is missing
 // — the app refuses to start with an invalid configuration.

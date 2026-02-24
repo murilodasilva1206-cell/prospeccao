@@ -137,6 +137,25 @@ DB_NAME=prospeccao
 DB_USER=prospeccao_app
 DB_PASSWORD=<senha>
 
+# SSL do PostgreSQL
+# DB_SSL=true          → conexao encriptada (padrao; obrigatorio em producao)
+# DB_SSL=false         → sem TLS (requer ALLOW_INSECURE_DB=true em producao)
+DB_SSL=true
+
+# Valida certificado do servidor contra CAs confiaveis.
+# Mantenha true (padrao) em producao. Use false apenas em redes internas
+# com cert auto-assinado (ex: Render internal network).
+DB_SSL_REJECT_UNAUTHORIZED=true
+
+# Tempo maximo (ms) para obter conexao do pool. Padrao 8000 ms —
+# mais alto que o padrao pg (2000) para tolerar cold start em serverless.
+# DB_CONNECT_TIMEOUT_MS=8000
+
+# Override de emergencia: permite DB_SSL=false em producao.
+# Deve ser definido EXPLICITAMENTE junto com DB_SSL=false.
+# Nunca defina em producao sem entender os riscos.
+# ALLOW_INSECURE_DB=false
+
 # OpenRouter
 OPENROUTER_API_KEY=sk-or-...
 OPENROUTER_MODEL=anthropic/claude-3.5-sonnet
