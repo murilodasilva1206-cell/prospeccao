@@ -24,13 +24,21 @@ const TABLE = 'cnpj_completo'
 //   correio_eletronico,
 //   tem_telefone (boolean), tem_email (boolean)
 
-// CountFilters — all filter fields optional; pagination/ordering not needed for COUNT
+// ---------------------------------------------------------------------------
+// CountFilters — filters relevant for COUNT(*); no pagination / ordering needed.
+// cnae_codes supports multi-code nicho resolution (e.g. "estética" → 3 codes).
+// ---------------------------------------------------------------------------
 export type CountFilters = Partial<
   Pick<
     BuscaQuery,
     'uf' | 'municipio' | 'cnae_principal' | 'nicho' | 'situacao_cadastral' | 'tem_telefone' | 'tem_email'
   >
->
+> & { cnae_codes?: string[] }
+
+// Extended type for the full search query — adds cnae_codes from multi-code resolution.
+export type ExtendedBuscaQuery = BuscaQuery & { cnae_codes?: string[] }
+
+const NUMERIC_RE = /^\d+$/
 
 function buildConditions(
   filters: CountFilters,
@@ -44,12 +52,34 @@ function buildConditions(
     values.push(filters.uf)
     paramIndex++
   }
+
   if (filters.municipio) {
-    conditions.push(`municipio ILIKE $${paramIndex}`)
-    values.push(`%${filters.municipio}%`) // wildcard added server-side
+    if (NUMERIC_RE.test(filters.municipio)) {
+      // Resolver already converted the name to a numeric codigo_f → exact match.
+      // This uses idx_cnpj_municipio (pending) or a seq scan filtered by uf.
+      conditions.push(`municipio = $${paramIndex}`)
+      values.push(filters.municipio)
+    } else {
+      // Text fallback (resolver not used or mapeamento_municipios not available).
+      // Uses idx_cnpj_municipio_trgm GIN index (migration 018).
+      conditions.push(`municipio ILIKE $${paramIndex}`)
+      values.push(`%${filters.municipio}%`)
+    }
     paramIndex++
   }
-  if (filters.cnae_principal) {
+
+  if (filters.cnae_codes && filters.cnae_codes.length > 0) {
+    // Multi-code nicho resolution (e.g. "estética" → ['9602-5/01','9602-5/02','9602-5/03']).
+    // Strip non-digits from each code here so the SQL uses a pre-normalised array
+    // on the right-hand side of the = ANY() expression.
+    const normalized = filters.cnae_codes.map((c) => c.replace(/[^0-9]/g, ''))
+    conditions.push(
+      `regexp_replace(cnae_principal, '[^0-9]', '', 'g') = ANY($${paramIndex}::text[])`,
+    )
+    values.push(normalized)
+    paramIndex++
+  } else if (filters.cnae_principal) {
+    // Single code (user input or single-result nicho resolution) — partial ILIKE.
     // Normalise both stored code and user input by stripping non-digits so that
     // '8630-5/04', '8630504', and '863050/4' all resolve to the same digits and
     // match the same records. The $N parameter holds the raw user value; the
@@ -60,6 +90,7 @@ function buildConditions(
     values.push(filters.cnae_principal)
     paramIndex++
   }
+
   if (filters.situacao_cadastral) {
     conditions.push(`situacao_cadastral = $${paramIndex}`) // exact RF numeric code ('02', etc.)
     values.push(filters.situacao_cadastral)
@@ -84,7 +115,7 @@ function buildConditions(
   return { conditions, values }
 }
 
-export function buildContactsQuery(filters: BuscaQuery): QueryResult {
+export function buildContactsQuery(filters: ExtendedBuscaQuery): QueryResult {
   const { conditions, values } = buildConditions(filters)
 
   const where =

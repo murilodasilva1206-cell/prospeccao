@@ -7,10 +7,11 @@ import { getClientIp } from '@/lib/get-ip'
 import { AgenteBodySchema } from '@/lib/schemas'
 import { detectInjectionAttempt } from '@/lib/agent-prompts'
 import { callAiAgent } from '@/lib/ai-client'
-import { buildContactsQuery, buildCountQuery } from '@/lib/query-builder'
+import { buildContactsQuery, buildCountQuery, type ExtendedBuscaQuery } from '@/lib/query-builder'
 import { maskContact } from '@/lib/mask-output'
 import { narrateSearchResult } from '@/lib/ai-narrator'
 import { getCnaeResolverService } from '@/lib/cnae-resolver-service'
+import { resolveMunicipio } from '@/lib/municipio-resolver'
 import { requireWorkspaceAuth, authErrorResponse, type AuthContext } from '@/lib/whatsapp/auth-middleware'
 import { getDefaultProfile } from '@/lib/llm-profile-repo'
 import { buildQueryFingerprint, getServedCnpjs, markAsServed } from '@/lib/served-leads-repo'
@@ -160,21 +161,31 @@ export async function POST(request: NextRequest) {
     })
   }
 
-  // 6. Resolve nicho → cnae_principal through 4-layer cascade:
+  // 6. Resolve nicho → one or more CNAE codes through 4-layer cascade:
   //    LRU cache → cnae_dictionary → IBGE API → persist discovery.
+  //
+  //    The resolver always takes priority over any cnae_principal the AI may have
+  //    inferred, because it has authoritative CNAE mapping and supports multi-code
+  //    niches.  cnae_principal is kept as-is only when no nicho was provided or
+  //    when the resolver fails to find a mapping.
   const rawFilters = intent.filters ?? {}
-  if (rawFilters.nicho && !rawFilters.cnae_principal) {
+  let cnaeCodesFromNicho: string[] | undefined
+  if (rawFilters.nicho) {
     const resolved = await getCnaeResolverService().resolve(rawFilters.nicho)
     if (resolved) {
-      rawFilters.cnae_principal = resolved
-      log.debug({ nicho: rawFilters.nicho, cnae: resolved }, 'Nicho resolved to CNAE')
+      // Always route through cnae_codes (= ANY) even for a single code.
+      // This is exact-match semantics (no ILIKE wildcards) and carries the full
+      // set returned by the merged dynamic+static resolver.
+      cnaeCodesFromNicho = resolved
+      rawFilters.cnae_principal = undefined
+      log.debug({ nicho: rawFilters.nicho, codes: resolved }, 'Nicho resolved to CNAE')
     }
   }
 
   // Guard: if a nicho was given but couldn't be mapped to a CNAE, a DB scan
   // with no sector filter would return meaningless results. Ask the user to
   // rephrase rather than executing an expensive full-table query.
-  if (rawFilters.nicho && !rawFilters.cnae_principal) {
+  if (rawFilters.nicho && !rawFilters.cnae_principal && !cnaeCodesFromNicho) {
     log.info({ nicho: rawFilters.nicho }, 'Nicho nao resolvido para CNAE — solicitando esclarecimento')
     return NextResponse.json({
       action: 'clarify',
@@ -203,6 +214,7 @@ export async function POST(request: NextRequest) {
     const params = new URLSearchParams()
     if (filters.uf) params.set('uf', filters.uf)
     if (filters.municipio) params.set('municipio', filters.municipio)
+    if (filters.nicho) params.set('nicho', filters.nicho)
     if (filters.cnae_principal) params.set('cnae_principal', filters.cnae_principal)
     if (filters.situacao_cadastral) params.set('situacao_cadastral', filters.situacao_cadastral)
     if (filters.tem_telefone != null) params.set('tem_telefone', String(filters.tem_telefone))
@@ -223,16 +235,47 @@ export async function POST(request: NextRequest) {
     try {
       const requestedLimit = filters.limit
 
-      log.debug({ filters, workspace_id: authCtx.workspace_id, actor: authCtx.actor }, 'Agent executing search query')
+      // 7a. Resolve municipio name → numeric codigo_f.
+      //     On ambiguity: return clarify. On not_found: return clarify.
+      let workingFilters: ExtendedBuscaQuery = { ...filters, cnae_codes: cnaeCodesFromNicho }
+
+      if (filters.municipio) {
+        const munResult = await resolveMunicipio(client, filters.municipio, filters.uf)
+
+        if (munResult.type === 'not_found') {
+          log.info({ municipio: filters.municipio, uf: filters.uf }, 'Municipio nao encontrado')
+          return NextResponse.json({
+            action: 'clarify',
+            message: `Não encontrei o município "${filters.municipio}" no cadastro. Verifique o nome ou informe a UF.`,
+            metadata: { latencyMs, parseSuccess, confidence: intent.confidence },
+          })
+        }
+
+        if (munResult.type === 'ambiguous') {
+          const stateList = munResult.candidates.map((c) => c.uf).join(', ')
+          log.info({ municipio: filters.municipio, candidates: munResult.candidates }, 'Municipio ambiguo')
+          return NextResponse.json({
+            action: 'clarify',
+            message: `"${filters.municipio}" existe em mais de um estado (${stateList}). Qual deles você quer buscar?`,
+            metadata: { latencyMs, parseSuccess, confidence: intent.confidence },
+          })
+        }
+
+        // found — replace text name with numeric code for exact-match query
+        workingFilters = { ...workingFilters, municipio: munResult.codigo }
+        log.debug({ municipio: filters.municipio, codigo: munResult.codigo, uf: munResult.uf }, 'Municipio resolvido')
+      }
+
+      log.debug({ filters: workingFilters, workspace_id: authCtx.workspace_id, actor: authCtx.actor }, 'Agent executing search query')
 
       // Fingerprint uses resolved cnae_principal (not raw nicho) so different phrasings
       // of the same sector share one dedup pool. Accent-normalized in buildQueryFingerprint.
       const fingerprint = buildQueryFingerprint({
-        uf:                 filters.uf,
-        municipio:          filters.municipio,
-        cnae_principal:     filters.cnae_principal,
-        nicho:              filters.cnae_principal ? null : rawFilters.nicho,
-        situacao_cadastral: filters.situacao_cadastral,
+        uf:                 workingFilters.uf,
+        municipio:          workingFilters.municipio,
+        cnae_principal:     workingFilters.cnae_principal,
+        nicho:              workingFilters.cnae_principal ? null : rawFilters.nicho,
+        situacao_cadastral: workingFilters.situacao_cadastral,
       })
 
       // Run count (optional) + served-leads lookup before the pagination loop.
@@ -241,7 +284,7 @@ export async function POST(request: NextRequest) {
       const countPromise = env.DB_SKIP_COUNT
         ? Promise.resolve(null)
         : (() => {
-            const { text: countText, values: countValues } = buildCountQuery(filters)
+            const { text: countText, values: countValues } = buildCountQuery(workingFilters)
             return client.query(countText, countValues)
           })()
 
@@ -265,12 +308,12 @@ export async function POST(request: NextRequest) {
       // We log a warning whenever the cap is hit so the condition is visible.
       const accumulated: ReturnType<typeof maskContact>[] = []
       const seenInBatch = new Set<string>()  // prevents cross-page duplicates (unstable ordering)
-      let page = filters.page ?? 1
+      let page = workingFilters.page ?? 1
       const MAX_PAGES = Math.min(Math.max(5, requestedLimit), 20)
       let cappedEarly = false
 
       for (let i = 0; i < MAX_PAGES && accumulated.length < requestedLimit; i++) {
-        const { text, values } = buildContactsQuery({ ...filters, page, limit: requestedLimit })
+        const { text, values } = buildContactsQuery({ ...workingFilters, page, limit: requestedLimit })
         const rows = await client.query(text, values)
         if (rows.rows.length === 0) break
 
@@ -308,16 +351,16 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({
         action: 'search',
-        filters,
+        filters: workingFilters,
         data,
         headline: narration.headline,
         subtitle: narration.subtitle,
         hasCta: narration.hasCta,
         meta: {
           total,
-          page: filters.page,
-          limit: filters.limit,
-          pages: total !== null ? Math.ceil(total / filters.limit) : null,
+          page: workingFilters.page,
+          limit: workingFilters.limit,
+          pages: total !== null ? Math.ceil(total / workingFilters.limit) : null,
         },
         metadata: { latencyMs, parseSuccess, confidence: intent.confidence, narratorSource: narration.source },
       })

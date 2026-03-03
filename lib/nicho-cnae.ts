@@ -10,13 +10,14 @@ import { logger } from '@/lib/logger'
 // Bounded LRU cache: at most 500 unique nicho strings, each entry lives 5 min.
 // LRUCache handles both eviction (max) and expiry (ttl) automatically, so the
 // Map never grows without limit.
-const _dynamicCache = new LRUCache<string, string>({
+// Values are arrays because a single nicho may map to multiple CNAE subclasses.
+const _dynamicCache = new LRUCache<string, string[]>({
   max: 500,
   ttl: 5 * 60 * 1000, // 5 minutes in ms
 })
 
 /**
- * Clears the in-memory CNAE cache.
+ * Clears the in-memory CNAE dynamic-resolver cache.
  * @internal Exported only for test isolation — do not call in production code.
  */
 export function _clearDynamicCacheForTesting(): void {
@@ -24,8 +25,11 @@ export function _clearDynamicCacheForTesting(): void {
 }
 
 /**
- * Resolves a nicho (free text) to a CNAE code by querying the `cnae_dictionary`
- * table.  Results are cached in memory for CACHE_TTL_MS to reduce DB load.
+ * Resolves a nicho (free text) to one or more CNAE codes by querying the
+ * `cnae_dictionary` table.  Results are cached in memory for 5 min.
+ *
+ * Returns up to 5 codes ordered by match quality, deduplicated by normalized
+ * digits so '9602-5/01' and '9602501' count as the same entry.
  *
  * Matching priority (deterministic — highest score wins):
  *   3 — Exact synonym match  : normalized nicho equals any element in `sinonimos`
@@ -35,7 +39,7 @@ export function _clearDynamicCacheForTesting(): void {
  * Returns undefined if nothing matches or if the DB is unavailable (falls back
  * to the static NICHO_CNAE_MAP in the caller).
  */
-export async function resolveNichoCnaeDynamic(nicho: string): Promise<string | undefined> {
+export async function resolveNichoCnaeDynamic(nicho: string): Promise<string[] | undefined> {
   const normalized = nicho
     .toLowerCase()
     .normalize('NFD')
@@ -51,9 +55,9 @@ export async function resolveNichoCnaeDynamic(nicho: string): Promise<string | u
   try {
     const client = await pool.connect()
     try {
-      // Score each row by match quality so the result is deterministic for
-      // ambiguous inputs: exact synonym (3) > substring synonym (2) > fuzzy
-      // description (1).  Without ORDER BY, LIMIT 1 is non-deterministic.
+      // Score each row by match quality so ORDER BY is deterministic.
+      // LIMIT 5: return the top N candidates so callers can use = ANY() with the
+      // full set rather than betting on a single best-guess code.
       const { rows } = await client.query<{ codigo: string }>(
         `SELECT codigo,
                 CASE
@@ -72,12 +76,23 @@ export async function resolveNichoCnaeDynamic(nicho: string): Promise<string | u
                )
             OR descricao ILIKE $2
          ORDER BY score DESC, codigo ASC
-         LIMIT 1`,
+         LIMIT 5`,
         [normalized, `%${normalized}%`],
       )
       if (rows.length > 0) {
-        _dynamicCache.set(normalized, rows[0].codigo)
-        return rows[0].codigo
+        // Deduplicate by digit-normalized code so '9602-5/01' and '9602501' are
+        // treated as the same entry.
+        const seen = new Set<string>()
+        const codes: string[] = []
+        for (const row of rows) {
+          const key = row.codigo.replace(/[^0-9]/g, '')
+          if (key && !seen.has(key)) {
+            seen.add(key)
+            codes.push(row.codigo)
+          }
+        }
+        _dynamicCache.set(normalized, codes)
+        return codes
       }
     } finally {
       client.release()
@@ -100,7 +115,11 @@ export async function resolveNichoCnaeDynamic(nicho: string): Promise<string | u
 // rota resolve para o código CNAE antes de executar a query no banco.
 // ---------------------------------------------------------------------------
 
-export const NICHO_CNAE_MAP: Record<string, string> = {
+// Values are either a single CNAE code or an array when a niche maps to
+// multiple subclasses (e.g. "estética" covers salão + barbearia + esteticista).
+// The resolver wraps single strings into arrays before returning so callers
+// always receive string[].
+export const NICHO_CNAE_MAP: Record<string, string | string[]> = {
   // Saúde
   'clinicas odontologicas': '8630-5/04',
   'clinicas dentarias': '8630-5/04',
@@ -128,11 +147,12 @@ export const NICHO_CNAE_MAP: Record<string, string> = {
   'cafeterias': '5611-2/03',
   'delivery': '5611-2/01',
 
-  // Beleza e Estética
-  'saloes de beleza': '9602-5/01',
+  // Beleza e Estética — múltiplos subclasses cobertos pela busca
+  'saloes de beleza': ['9602-5/01', '9602-5/02', '9602-5/03'],
   'cabeleireiros': '9602-5/01',
   'barbearias': '9602-5/02',
-  'estetica': '9602-5/03',
+  'estetica': ['9602-5/01', '9602-5/02', '9602-5/03'],
+  'esteticistas': '9602-5/03',
   'manicure': '9602-5/01',
   'spa': '9609-2/08',
 
@@ -143,7 +163,7 @@ export const NICHO_CNAE_MAP: Record<string, string> = {
   'yoga': '9313-1/00',
 
   // Educação
-  'escolas': '8511-2/00',
+  'escolas': ['8511-2/00', '8512-1/00', '8513-9/00'],
   'faculdades': '8532-5/00',
   'creches': '8511-2/00',
   'cursos': '8599-6/04',
@@ -186,11 +206,12 @@ export const NICHO_CNAE_MAP: Record<string, string> = {
 }
 
 /**
- * Resolve a nicho (texto livre do usuário ou do AI) para um código CNAE.
+ * Resolve a nicho (texto livre do usuário ou do AI) para um ou mais códigos CNAE.
  * Normaliza para minúsculas e remove acentos para maior tolerância.
  * Retorna undefined se não encontrar mapeamento.
+ * Retorna string[] — sempre array, mesmo para nichos de código único.
  */
-export function resolveNichoCnae(nicho: string): string | undefined {
+export function resolveNichoCnae(nicho: string): string[] | undefined {
   const normalized = nicho
     .toLowerCase()
     .normalize('NFD')
@@ -199,12 +220,13 @@ export function resolveNichoCnae(nicho: string): string | undefined {
 
   // Exact match first — eslint-disable: normalized is a controlled internal string
   // eslint-disable-next-line security/detect-object-injection
-  if (NICHO_CNAE_MAP[normalized]) return NICHO_CNAE_MAP[normalized]
+  const exactMatch = NICHO_CNAE_MAP[normalized]
+  if (exactMatch) return Array.isArray(exactMatch) ? exactMatch : [exactMatch]
 
   // Substring match (nicho contains or is contained by a key)
   for (const [key, cnae] of Object.entries(NICHO_CNAE_MAP)) {
     if (normalized.includes(key) || key.includes(normalized)) {
-      return cnae
+      return Array.isArray(cnae) ? cnae : [cnae]
     }
   }
 

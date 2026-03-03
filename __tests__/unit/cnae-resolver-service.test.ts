@@ -19,8 +19,9 @@ const { mockDynamic, mockStatic, mockPool, mockClient, mockQuery, mockRelease } 
   const mockRelease = vi.fn()
   const mockClient = { query: mockQuery, release: mockRelease }
   const mockPool = { connect: vi.fn().mockResolvedValue(mockClient) }
-  const mockDynamic = vi.fn<(q: string) => Promise<string | undefined>>()
-  const mockStatic  = vi.fn<(q: string) => string | undefined>()
+  // Dynamic resolver now returns string[] (multiple codes) instead of a single string
+  const mockDynamic = vi.fn<(q: string) => Promise<string[] | undefined>>()
+  const mockStatic  = vi.fn<(q: string) => string[] | undefined>()
   return { mockDynamic, mockStatic, mockPool, mockClient, mockQuery, mockRelease }
 })
 
@@ -77,19 +78,21 @@ describe('resolve — empty input', () => {
 // ---------------------------------------------------------------------------
 describe('resolve — Layer 2: DB dynamic', () => {
   it('returns DB result when resolveNichoCnaeDynamic matches', async () => {
-    mockDynamic.mockResolvedValue('8630-5/04')
+    mockDynamic.mockResolvedValue(['8630-5/04'])
     const svc = makeService()
     const result = await svc.resolve('dentistas')
-    expect(result).toBe('8630-5/04')
+    expect(result).toEqual(['8630-5/04'])
     expect(mockDynamic).toHaveBeenCalledWith('dentistas')
   })
 
-  it('does not call static map or IBGE when DB hits', async () => {
-    mockDynamic.mockResolvedValue('8630-5/04')
+  it('calls static map to merge codes even when DB hits (may add more codes)', async () => {
+    // Static returns nothing extra here — just verify it is called
+    mockDynamic.mockResolvedValue(['8630-5/04'])
+    mockStatic.mockReturnValue(undefined)
     const svc = makeService()
     await svc.resolve('dentistas')
-    expect(mockStatic).not.toHaveBeenCalled()
-    expect(fetch).not.toHaveBeenCalled()
+    expect(mockStatic).toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()   // IBGE still not called (merged set non-empty)
   })
 })
 
@@ -99,16 +102,16 @@ describe('resolve — Layer 2: DB dynamic', () => {
 describe('resolve — Layer 2b: static map', () => {
   it('falls back to static map when DB returns undefined', async () => {
     mockDynamic.mockResolvedValue(undefined)
-    mockStatic.mockReturnValue('5611-2/01')
+    mockStatic.mockReturnValue(['5611-2/01'])
     const svc = makeService()
     const result = await svc.resolve('restaurantes')
-    expect(result).toBe('5611-2/01')
+    expect(result).toEqual(['5611-2/01'])
     expect(mockStatic).toHaveBeenCalledWith('restaurantes')
   })
 
   it('does not call IBGE when static map matches', async () => {
     mockDynamic.mockResolvedValue(undefined)
-    mockStatic.mockReturnValue('5611-2/01')
+    mockStatic.mockReturnValue(['5611-2/01'])
     const svc = makeService()
     await svc.resolve('restaurantes')
     expect(fetch).not.toHaveBeenCalled()
@@ -133,7 +136,7 @@ describe('resolve — Layer 3: IBGE API', () => {
 
     const svc = makeService()
     const result = await svc.resolve('roupas')
-    expect(result).toBe('4781-4/00')
+    expect(result).toEqual(['4781-4/00'])
     expect(mockFetch).toHaveBeenCalledOnce()
     expect(mockFetch.mock.calls[0][0]).toContain('roupas')
   })
@@ -196,17 +199,19 @@ describe('resolve — Layer 3: IBGE API', () => {
 // Layer 1: LRU cache
 // ---------------------------------------------------------------------------
 describe('resolve — Layer 1: LRU cache', () => {
-  it('returns cached result on second call without hitting DB', async () => {
-    mockDynamic.mockResolvedValueOnce('8630-5/04')
+  it('returns cached result on second call without hitting DB or static map', async () => {
+    mockDynamic.mockResolvedValueOnce(['8630-5/04'])
     const svc = makeService()
 
     await svc.resolve('dentistas')
     mockDynamic.mockClear()
+    mockStatic.mockClear()
 
     const cached = await svc.resolve('dentistas')
-    expect(cached).toBe('8630-5/04')
-    // DB should NOT have been called again
+    expect(cached).toEqual(['8630-5/04'])
+    // Neither DB nor static map should be called again
     expect(mockDynamic).not.toHaveBeenCalled()
+    expect(mockStatic).not.toHaveBeenCalled()
   })
 })
 
@@ -216,10 +221,77 @@ describe('resolve — Layer 1: LRU cache', () => {
 describe('resolve — normalisation', () => {
   it('strips accents before resolution', async () => {
     mockDynamic.mockImplementation(async (q: string) =>
-      q === 'restaurantes' ? '5611-2/01' : undefined,
+      q === 'restaurantes' ? ['5611-2/01'] : undefined,
     )
     const svc = makeService()
     const result = await svc.resolve('Restaurantés')  // accent + uppercase
-    expect(result).toBe('5611-2/01')
+    expect(result).toEqual(['5611-2/01'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Source merging — dynamic + static combined
+// ---------------------------------------------------------------------------
+describe('resolve — merge sources', () => {
+  it('merges dynamic single code with static multi-code set (estetica scenario)', async () => {
+    // Dynamic returns one beauty subclass; static knows all three
+    mockDynamic.mockResolvedValue(['9602-5/01'])
+    mockStatic.mockReturnValue(['9602-5/01', '9602-5/02', '9602-5/03'])
+
+    const svc = makeService()
+    const result = await svc.resolve('estetica')
+
+    // Dedup applied: '9602-5/01' appears in both sources → included once
+    expect(result).toEqual(['9602-5/01', '9602-5/02', '9602-5/03'])
+    expect(fetch).not.toHaveBeenCalled()   // IBGE not needed
+  })
+
+  it('uses dynamic result when static map misses', async () => {
+    mockDynamic.mockResolvedValue(['8630-5/04'])
+    mockStatic.mockReturnValue(undefined)
+
+    const svc = makeService()
+    const result = await svc.resolve('dentistas-only-dynamic')
+
+    expect(result).toEqual(['8630-5/04'])
+  })
+
+  it('uses static result when dynamic DB misses', async () => {
+    mockDynamic.mockResolvedValue(undefined)
+    mockStatic.mockReturnValue(['5611-2/01', '5611-2/03'])
+
+    const svc = makeService()
+    const result = await svc.resolve('restaurantes-only-static')
+
+    expect(result).toEqual(['5611-2/01', '5611-2/03'])
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('deduplicates codes with the same digit-normalised key across sources', async () => {
+    // '8630-5/04' (dynamic) and '8630504' (static) normalise to same digits
+    mockDynamic.mockResolvedValue(['8630-5/04'])
+    mockStatic.mockReturnValue(['8630504', '8630-5/08'])  // dup + new code
+
+    const svc = makeService()
+    const result = await svc.resolve('odonto-dedup')
+
+    // First occurrence ('8630-5/04' from dynamic) wins; '8630504' is the dup
+    expect(result).toEqual(['8630-5/04', '8630-5/08'])
+  })
+
+  it('falls through to IBGE when both dynamic and static miss', async () => {
+    mockDynamic.mockResolvedValue(undefined)
+    mockStatic.mockReturnValue(undefined)
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue([{ id: '4781-4/00', descricao: 'Vestuario' }]),
+    }))
+
+    const svc = makeService()
+    const result = await svc.resolve('roupas-ibge-fallback')
+
+    expect(result).toEqual(['4781-4/00'])
+    expect(fetch).toHaveBeenCalledOnce()
   })
 })

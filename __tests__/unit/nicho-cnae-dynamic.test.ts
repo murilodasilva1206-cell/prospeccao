@@ -66,7 +66,7 @@ describe('resolveNichoCnaeDynamic', () => {
 
       const result = await resolveNichoCnaeDynamic('dentistas')
 
-      expect(result).toBe('8630-5/04')
+      expect(result).toEqual(['8630-5/04'])
       expect(mockQuery).toHaveBeenCalledOnce()
       // Verify the normalized value is passed as $1
       const [, params] = mockQuery.mock.calls[0] as [string, string[]]
@@ -78,7 +78,7 @@ describe('resolveNichoCnaeDynamic', () => {
 
       const result = await resolveNichoCnaeDynamic('Salões de Beleza')
 
-      expect(result).toBe('9602-5/01')
+      expect(result).toEqual(['9602-5/01'])
       const [, params] = mockQuery.mock.calls[0] as [string, string[]]
       expect(params[0]).toBe('saloes de beleza') // diacritics stripped, lowercased
     })
@@ -91,7 +91,7 @@ describe('resolveNichoCnaeDynamic', () => {
 
       const result = await resolveNichoCnaeDynamic('servicos de limpeza comercial')
 
-      expect(result).toBe('8121-4/00')
+      expect(result).toEqual(['8121-4/00'])
       const [, params] = mockQuery.mock.calls[0] as [string, string[]]
       // $2 must be the ILIKE pattern wrapping the normalized nicho
       expect(params[1]).toBe('%servicos de limpeza comercial%')
@@ -169,8 +169,8 @@ describe('resolveNichoCnaeDynamic', () => {
       const first = await resolveNichoCnaeDynamic('academias-cache-test')
       const second = await resolveNichoCnaeDynamic('academias-cache-test')
 
-      expect(first).toBe('9313-1/00')
-      expect(second).toBe('9313-1/00')
+      expect(first).toEqual(['9313-1/00'])
+      expect(second).toEqual(['9313-1/00'])
       // DB called only once — second call served from cache
       expect(mockQuery).toHaveBeenCalledOnce()
     })
@@ -191,5 +191,64 @@ describe('resolveNichoCnaeDynamic', () => {
       await resolveNichoCnaeDynamic('academias-expiry-test')
       expect(mockQuery).toHaveBeenCalledTimes(2)
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Multi-code return (new behaviour: LIMIT 5 instead of LIMIT 1)
+// ---------------------------------------------------------------------------
+
+describe('resolveNichoCnaeDynamic — multi-code return', () => {
+  it('returns all distinct codes when DB returns multiple rows', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        dbRow('9602-5/01'),
+        dbRow('9602-5/02'),
+        dbRow('9602-5/03'),
+      ],
+    })
+
+    const result = await resolveNichoCnaeDynamic('estetica')
+
+    expect(result).toEqual(['9602-5/01', '9602-5/02', '9602-5/03'])
+  })
+
+  it('deduplicates codes with the same digit-normalised key', async () => {
+    // '9602-5/01' and '9602501' normalise to the same digits — only one entry
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        dbRow('9602-5/01'),
+        dbRow('9602501'),    // same digits, different format
+        dbRow('9602-5/02'),
+      ],
+    })
+
+    const result = await resolveNichoCnaeDynamic('saloes-dedup-test')
+
+    // First occurrence wins; duplicates are dropped
+    expect(result).toEqual(['9602-5/01', '9602-5/02'])
+  })
+
+  it('returns a single-element array when only one row matches', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [dbRow('8630-5/04')] })
+
+    const result = await resolveNichoCnaeDynamic('dentistas-single')
+
+    expect(result).toEqual(['8630-5/04'])
+    expect(Array.isArray(result)).toBe(true)
+  })
+
+  it('caches the full array and returns it on repeat call without DB', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [dbRow('9602-5/01'), dbRow('9602-5/02')],
+    })
+
+    const first = await resolveNichoCnaeDynamic('beleza-cache-multi')
+    mockQuery.mockClear()
+    const second = await resolveNichoCnaeDynamic('beleza-cache-multi')
+
+    expect(first).toEqual(['9602-5/01', '9602-5/02'])
+    expect(second).toEqual(['9602-5/01', '9602-5/02'])
+    expect(mockQuery).not.toHaveBeenCalled() // served from cache
   })
 })

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildContactsQuery, buildCountQuery } from '@/lib/query-builder'
+import { buildContactsQuery, buildCountQuery, type ExtendedBuscaQuery } from '@/lib/query-builder'
 import { BuscaQuerySchema } from '@/lib/schemas'
 import type { BuscaQuery } from '@/lib/schemas'
 
@@ -36,11 +36,39 @@ describe('buildContactsQuery', () => {
     expect(values).not.toContain('%SP%')
   })
 
-  it('uses ILIKE with server-side wildcard for municipio', () => {
+  it('uses ILIKE with server-side wildcard for text municipio', () => {
     const payload = "'; DROP TABLE estabelecimentos; --"
     const { text, values } = buildContactsQuery({ ...baseFilters, municipio: payload })
     expect(text).not.toContain(payload)
     expect(values).toContain(`%${payload}%`)
+  })
+
+  it('uses exact match for numeric municipio code (resolver output)', () => {
+    const { text, values } = buildContactsQuery({ ...baseFilters, municipio: '3550308' })
+    expect(text).toMatch(/municipio\s*=\s*\$\d+/i)
+    expect(values).toContain('3550308')
+    expect(values).not.toContain('%3550308%')
+  })
+
+  it('uses = ANY for multi-code cnae_codes from nicho resolution', () => {
+    const extFilters: ExtendedBuscaQuery = {
+      ...baseFilters,
+      cnae_codes: ['9602-5/01', '9602-5/02', '9602-5/03'],
+    }
+    const { text, values } = buildContactsQuery(extFilters)
+    expect(text).toContain('regexp_replace(cnae_principal')
+    expect(text).toMatch(/=\s*ANY\(/i)
+    // Digits are pre-normalised in the app; the array contains digit-only codes
+    const codesParam = values.find((v) => Array.isArray(v)) as string[]
+    expect(codesParam).toEqual(['9602501', '9602502', '9602503'])
+    // ILIKE branch must NOT appear when cnae_codes is set
+    expect(text).not.toContain('ILIKE')
+  })
+
+  it('falls back to ILIKE for single cnae_principal when cnae_codes not set', () => {
+    const { text } = buildContactsQuery({ ...baseFilters, cnae_principal: '8630-5/04' })
+    expect(text).toContain('ILIKE')
+    expect(text).not.toMatch(/=\s*ANY\(/i)
   })
 
   it('normalizes CNAE via regexp_replace so dashes and slashes are ignored', () => {
@@ -128,6 +156,49 @@ describe('buildContactsQuery', () => {
       BuscaQuerySchema.parse({ orderBy: '1; SELECT pg_sleep(5); --' })
     ).toThrow()
   })
+
+  it('single-code nicho via cnae_codes uses = ANY(), not ILIKE', () => {
+    // When a nicho resolves to exactly one CNAE the route still puts it in
+    // cnae_codes (not cnae_principal) so we always get exact-match semantics.
+    const extFilters: ExtendedBuscaQuery = {
+      ...baseFilters,
+      cnae_codes: ['8630-5/04'],
+    }
+    const { text } = buildContactsQuery(extFilters)
+    expect(text).toMatch(/= ANY\(/i)
+    expect(text).not.toContain('ILIKE')
+  })
+
+  it('applies all filters correctly for a large limit request', () => {
+    const extFilters: ExtendedBuscaQuery = {
+      ...baseFilters,
+      uf: 'SP',
+      municipio: '3550308',         // numeric — exact match
+      cnae_codes: ['9602-5/01', '9602-5/02', '9602-5/03'],
+      situacao_cadastral: '02',
+      tem_telefone: true,
+      tem_email: false,
+      limit: 100,
+      page: 1,
+      orderBy: 'razao_social',
+      orderDir: 'asc',
+    }
+    const { text, values } = buildContactsQuery(extFilters)
+
+    // All WHERE predicates present
+    expect(text).toMatch(/uf\s*=\s*\$\d+/i)
+    expect(text).toMatch(/municipio\s*=\s*\$\d+/i)       // exact (numeric)
+    expect(text).toMatch(/= ANY\(/i)                       // cnae_codes
+    expect(text).toMatch(/situacao_cadastral\s*=\s*\$\d+/i)
+    expect(text).toMatch(/tem_telefone\s*=\s*true/i)
+    expect(text).toMatch(/tem_email\s*=\s*false/i)
+
+    // LIMIT is parameterized (not hardcoded 100 in SQL text)
+    const limitMatch = text.match(/LIMIT\s+\$(\d+)/i)
+    expect(limitMatch).toBeTruthy()
+    const limitIdx = parseInt(limitMatch![1]) - 1
+    expect(values[limitIdx]).toBe(100)
+  })
 })
 
 describe('buildCountQuery', () => {
@@ -143,10 +214,23 @@ describe('buildCountQuery', () => {
     expect(values[0]).toBe('RJ')
   })
 
-  it('uses wildcard parameterized value for municipio', () => {
+  it('uses ILIKE wildcard for text municipio', () => {
     const { text, values } = buildCountQuery({ municipio: 'Niteroi' })
     expect(text).toContain('$1')
     expect(values[0]).toBe('%Niteroi%')
+  })
+
+  it('uses exact match for numeric municipio code', () => {
+    const { text, values } = buildCountQuery({ municipio: '3304557' })
+    expect(text).toMatch(/municipio\s*=\s*\$\d+/i)
+    expect(values[0]).toBe('3304557')
+  })
+
+  it('uses = ANY for cnae_codes in count query', () => {
+    const { text, values } = buildCountQuery({ cnae_codes: ['9602-5/01', '9602-5/02'] })
+    expect(text).toMatch(/=\s*ANY\(/i)
+    const codesParam = values.find((v) => Array.isArray(v)) as string[]
+    expect(codesParam).toEqual(['9602501', '9602502'])
   })
 
   it('does not include LIMIT or OFFSET', () => {

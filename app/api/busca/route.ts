@@ -5,10 +5,11 @@ import { logger } from '@/lib/logger'
 import { buscaLimiter } from '@/lib/rate-limit'
 import { getClientIp } from '@/lib/get-ip'
 import { BuscaQuerySchema } from '@/lib/schemas'
-import { buildContactsQuery, buildCountQuery } from '@/lib/query-builder'
+import { buildContactsQuery, buildCountQuery, type ExtendedBuscaQuery } from '@/lib/query-builder'
 import { maskContact } from '@/lib/mask-output'
 import { getCnaeResolverService } from '@/lib/cnae-resolver-service'
 import { requireWorkspaceAuth, authErrorResponse, type AuthContext } from '@/lib/whatsapp/auth-middleware'
+import { resolveMunicipio } from '@/lib/municipio-resolver'
 import { env } from '@/lib/env'
 
 export async function GET(request: NextRequest) {
@@ -36,10 +37,10 @@ export async function GET(request: NextRequest) {
   }
 
   // 2. Parse and validate query parameters (Zod whitelist)
-  let filters
+  let parsedFilters
   try {
     const raw = Object.fromEntries(request.nextUrl.searchParams.entries())
-    filters = BuscaQuerySchema.parse(raw)
+    parsedFilters = BuscaQuerySchema.parse(raw)
   } catch (err) {
     if (err instanceof ZodError) {
       log.info({ issues: err.issues }, 'Erro de validacao em /api/busca')
@@ -69,20 +70,24 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // 4. Resolve nicho → cnae_principal via the 4-layer cascade
+  // 4. Resolve nicho → one or more CNAE codes via the 4-layer cascade
   //    (LRU cache → cnae_dictionary → static map → IBGE API)
   //    Safe: only runs after a valid authenticated request.
-  if (filters.nicho && !filters.cnae_principal) {
-    const resolved = await getCnaeResolverService().resolve(filters.nicho)
+  let cnaeCodesFromNicho: string[] | undefined
+  if (parsedFilters.nicho) {
+    const resolved = await getCnaeResolverService().resolve(parsedFilters.nicho)
     if (resolved) {
-      filters = { ...filters, cnae_principal: resolved }
-      log.debug({ nicho: filters.nicho, cnae: resolved }, 'Nicho resolvido para CNAE')
+      // Always route through cnae_codes (= ANY) — exact-match semantics and carries
+      // the full merged set from dynamic + static resolver.
+      cnaeCodesFromNicho = resolved
+      parsedFilters = { ...parsedFilters, cnae_principal: undefined }
+      log.debug({ nicho: parsedFilters.nicho, codes: resolved }, 'Nicho resolvido para CNAE')
     }
   }
 
   // Guard: nicho was given but couldn't be mapped — reject rather than scanning
   // the whole table with no sector filter, which returns meaningless results.
-  if (filters.nicho && !filters.cnae_principal) {
+  if (parsedFilters.nicho && !cnaeCodesFromNicho) {
     return NextResponse.json(
       { error: 'Nicho não reconhecido. Tente um segmento mais específico, como "dentistas" ou "restaurantes".' },
       { status: 400 },
@@ -93,9 +98,38 @@ export async function GET(request: NextRequest) {
   try {
     const client = await pool.connect()
     try {
-      const { text, values } = buildContactsQuery(filters)
+      // 5a. Resolve municipio name → numeric codigo_f (requires mapeamento_municipios).
+      //     On ambiguity or not-found, return 400 with a helpful message.
+      let workingFilters: ExtendedBuscaQuery = { ...parsedFilters, cnae_codes: cnaeCodesFromNicho }
 
-      log.debug({ filters, workspace_id: auth.workspace_id, actor: auth.actor }, 'Executando busca')
+      if (parsedFilters.municipio) {
+        const munResult = await resolveMunicipio(client, parsedFilters.municipio, parsedFilters.uf)
+
+        if (munResult.type === 'not_found') {
+          log.info({ municipio: parsedFilters.municipio, uf: parsedFilters.uf }, 'Municipio nao encontrado em mapeamento_municipios')
+          return NextResponse.json(
+            { error: `Município "${parsedFilters.municipio}" não encontrado. Verifique o nome ou informe a UF.` },
+            { status: 400 },
+          )
+        }
+
+        if (munResult.type === 'ambiguous') {
+          log.info({ municipio: parsedFilters.municipio, candidates: munResult.candidates }, 'Municipio ambiguo — solicitar UF')
+          return NextResponse.json(
+            {
+              error: `Município "${parsedFilters.municipio}" existe em mais de um estado. Informe a UF para disambiguar.`,
+              candidates: munResult.candidates,
+            },
+            { status: 400 },
+          )
+        }
+
+        // found — replace text name with numeric code for exact-match query
+        workingFilters = { ...workingFilters, municipio: munResult.codigo }
+        log.debug({ municipio: parsedFilters.municipio, codigo: munResult.codigo, uf: munResult.uf }, 'Municipio resolvido')
+      }
+
+      log.debug({ filters: workingFilters, workspace_id: auth.workspace_id, actor: auth.actor }, 'Executando busca')
 
       let data: ReturnType<typeof maskContact>[]
       let total: number | null = null
@@ -103,10 +137,12 @@ export async function GET(request: NextRequest) {
       if (env.DB_SKIP_COUNT) {
         // Skip COUNT(*) — returns total: null in pagination metadata.
         // Use when the table is large and indexes are not yet in place.
+        const { text, values } = buildContactsQuery(workingFilters)
         const rows = await client.query(text, values)
         data = rows.rows.map(maskContact)
       } else {
-        const { text: countText, values: countValues } = buildCountQuery(filters)
+        const { text, values } = buildContactsQuery(workingFilters)
+        const { text: countText, values: countValues } = buildCountQuery(workingFilters)
         const [rows, countResult] = await Promise.all([
           client.query(text, values),
           client.query(countText, countValues),
@@ -121,9 +157,9 @@ export async function GET(request: NextRequest) {
         data,
         meta: {
           total,
-          page: filters.page,
-          limit: filters.limit,
-          pages: total !== null ? Math.ceil(total / filters.limit) : null,
+          page: parsedFilters.page,
+          limit: parsedFilters.limit,
+          pages: total !== null ? Math.ceil(total / parsedFilters.limit) : null,
         },
       })
     } finally {

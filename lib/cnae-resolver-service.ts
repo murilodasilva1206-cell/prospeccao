@@ -31,21 +31,43 @@ const ibgeBreaker = new CircuitBreaker('ibge-cnae', {
   timeout: 60_000,       // wait 60 seconds before probing
 })
 
+/**
+ * Merges multiple CNAE code arrays into one, deduplicating by digit-normalized
+ * code so '9602-5/01' and '9602501' count as the same entry.
+ * Preserves insertion order (first source wins on collision).
+ */
+function mergeCnaeCodes(...sources: (string[] | undefined)[]): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const source of sources) {
+    if (!source) continue
+    for (const code of source) {
+      const key = code.replace(/[^0-9]/g, '')
+      if (key && !seen.has(key)) {
+        seen.add(key)
+        result.push(code)
+      }
+    }
+  }
+  return result
+}
+
 export class CnaeResolverService {
-  private readonly cache: LRUCache<string, string>
+  private readonly cache: LRUCache<string, string[]>
 
   constructor(private readonly pool: Pool) {
-    this.cache = new LRUCache<string, string>({
+    this.cache = new LRUCache<string, string[]>({
       max: 500,
       ttl: 5 * 60 * 1000, // 5 minutes
     })
   }
 
   /**
-   * Resolves a nicho (free text) to a CNAE code through 4 layers.
+   * Resolves a nicho (free text) to one or more CNAE codes through 4 layers.
+   * Returns string[] so callers can support multi-code niches (e.g. "estética").
    * Returns undefined only when all layers fail.
    */
-  async resolve(nicho: string): Promise<string | undefined> {
+  async resolve(nicho: string): Promise<string[] | undefined> {
     const normalized = nicho
       .toLowerCase()
       .normalize('NFD')
@@ -58,18 +80,21 @@ export class CnaeResolverService {
     const cached = this.cache.get(normalized)
     if (cached !== undefined) return cached
 
-    // Layer 2: cnae_dictionary (resolveNichoCnaeDynamic manages its own connection)
-    const dynamic = await resolveNichoCnaeDynamic(normalized)
-    if (dynamic) {
-      this.cache.set(normalized, dynamic)
-      return dynamic
-    }
+    // Layers 2 + 2b: run BOTH the DB dictionary and the static map, then merge.
+    //
+    // Running both (instead of stopping at the first hit) ensures that a nicho
+    // like "estética" gets the full set of beauty subclasses even when the DB
+    // only has one of them cached.  mergeCnaeCodes deduplicates by digit-
+    // normalised code so there are no duplicates in the result.
+    const [dynamic, staticResult] = await Promise.all([
+      resolveNichoCnaeDynamic(normalized),
+      Promise.resolve(resolveNichoCnae(normalized)),
+    ])
 
-    // Layer 2b: static map fallback (resolveNichoCnae is synchronous)
-    const staticResult = resolveNichoCnae(normalized)
-    if (staticResult) {
-      this.cache.set(normalized, staticResult)
-      return staticResult
+    const merged = mergeCnaeCodes(dynamic, staticResult)
+    if (merged.length > 0) {
+      this.cache.set(normalized, merged)
+      return merged
     }
 
     // Layer 3: IBGE CNAE API
@@ -79,8 +104,9 @@ export class CnaeResolverService {
     // Layer 4: Persist new mapping to cnae_dictionary so it's available next time
     await this.persistToDictionary(normalized, ibgeResult.id, ibgeResult.descricao)
 
-    this.cache.set(normalized, ibgeResult.id)
-    return ibgeResult.id
+    const codes = [ibgeResult.id]
+    this.cache.set(normalized, codes)
+    return codes
   }
 
   private async queryIbge(query: string): Promise<IbgeSubclass | null> {
