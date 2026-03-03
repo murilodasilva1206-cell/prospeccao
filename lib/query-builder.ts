@@ -55,7 +55,7 @@ function buildConditions(
 
   if (filters.municipio) {
     if (NUMERIC_RE.test(filters.municipio)) {
-      // Resolver already converted the name to a numeric codigo_f → exact match.
+      // Resolver already converted the name to a numeric codigo_rf → exact match.
       // This uses idx_cnpj_municipio (pending) or a seq scan filtered by uf.
       conditions.push(`municipio = $${paramIndex}`)
       values.push(filters.municipio)

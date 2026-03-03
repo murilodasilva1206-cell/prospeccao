@@ -194,6 +194,19 @@ export async function POST(request: NextRequest) {
     })
   }
 
+  // Regex fallback: extract a requested quantity from the user message when the
+  // AI did not populate `filters.limit`.  Matches patterns like:
+  //   "100 clínicas", "me traga 50 leads", "preciso de 30 empresas", "buscar 200"
+  // The extracted value is clamped to [1, 100] to match the schema hard cap.
+  let resolvedLimit = rawFilters.limit
+  if (!resolvedLimit) {
+    const m = body.message.match(/\b(\d{1,3})\b/)
+    if (m) {
+      const parsed = parseInt(m[1], 10)
+      if (parsed >= 1) resolvedLimit = Math.min(parsed, 100)
+    }
+  }
+
   // Build complete BuscaQuery with defaults
   const filters: BuscaQuery = {
     uf: rawFilters.uf,
@@ -206,7 +219,7 @@ export async function POST(request: NextRequest) {
     orderBy: rawFilters.orderBy ?? 'contato_priority',
     orderDir: rawFilters.orderDir ?? 'asc',
     page: rawFilters.page ?? 1,
-    limit: rawFilters.limit ?? 20,
+    limit: resolvedLimit ?? 20,
   }
 
   if (intent.action === 'export') {
@@ -290,7 +303,7 @@ export async function POST(request: NextRequest) {
 
       const [countResult, servedSet] = await Promise.all([
         countPromise,
-        getServedCnpjs(client, authCtx.workspace_id, authCtx.dedup_actor_id, fingerprint)
+        getServedCnpjs(client, authCtx.workspace_id, authCtx.dedup_actor_id)
           .catch(() => new Set<string>()),
       ])
       const total: number | null = countResult !== null

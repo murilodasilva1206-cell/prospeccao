@@ -148,7 +148,7 @@ export async function GET(request: NextRequest) {
   try {
     const client = await pool.connect()
     try {
-      // Resolve municipio text name → numeric codigo_f before querying.
+      // Resolve municipio text name → numeric codigo_rf before querying.
       // Not-found and ambiguous results are rejected with 400 so the export
       // doesn't silently fall back to an unfiltered full-table scan.
       let workingFilters: ExtendedBuscaQuery = searchFilters

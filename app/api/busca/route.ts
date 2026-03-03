@@ -98,7 +98,7 @@ export async function GET(request: NextRequest) {
   try {
     const client = await pool.connect()
     try {
-      // 5a. Resolve municipio name → numeric codigo_f (requires mapeamento_municipios).
+      // 5a. Resolve municipio name → numeric codigo_rf (requires mapeamento_municipios).
       //     On ambiguity or not-found, return 400 with a helpful message.
       let workingFilters: ExtendedBuscaQuery = { ...parsedFilters, cnae_codes: cnaeCodesFromNicho }
 

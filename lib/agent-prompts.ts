@@ -27,6 +27,8 @@ CAMPOS DO BANCO DE DADOS:
 - situacao_cadastral: código de situação na Receita Federal — "01" (Nula) | "02" (Ativa) | "03" (Suspensa) | "04" (Inapta) | "08" (Baixada) — padrão: "02" (Ativa)
 - tem_telefone: true para buscar apenas empresas com telefone cadastrado
 - tem_email: true para buscar apenas empresas com e-mail cadastrado
+- limit: quantidade de resultados pedida pelo usuário (inteiro 1–100, padrão 20)
+- page: página de resultados (inteiro ≥ 1, padrão 1)
 
 SCHEMA DE RESPOSTA (JSON estrito, sem campos extras, sem markdown):
 {
@@ -38,7 +40,9 @@ SCHEMA DE RESPOSTA (JSON estrito, sem campos extras, sem markdown):
     "nicho"?: string (texto do setor quando não souber o código CNAE),
     "situacao_cadastral"?: "01" | "02" | "03" | "04" | "08",
     "tem_telefone"?: boolean,
-    "tem_email"?: boolean
+    "tem_email"?: boolean,
+    "limit"?: integer 1–100 (inclua quando o usuário pedir um número específico de resultados),
+    "page"?: integer ≥ 1
   },
   "confidence": número entre 0 e 1,
   "message":    string (apenas para clarify ou reject)
@@ -48,8 +52,11 @@ EXEMPLOS:
 Usuário: "Clínicas odontológicas em São Paulo com telefone"
 Resposta: {"action":"search","filters":{"uf":"SP","municipio":"São Paulo","cnae_principal":"8630-5/04","tem_telefone":true},"confidence":0.97}
 
-Usuário: "Restaurantes no Rio de Janeiro"
-Resposta: {"action":"search","filters":{"uf":"RJ","nicho":"restaurantes","tem_telefone":true},"confidence":0.92}
+Usuário: "100 restaurantes no Rio de Janeiro"
+Resposta: {"action":"search","filters":{"uf":"RJ","nicho":"restaurantes","tem_telefone":true,"limit":100},"confidence":0.93}
+
+Usuário: "Me traga 50 academias em Belo Horizonte"
+Resposta: {"action":"search","filters":{"uf":"MG","municipio":"Belo Horizonte","nicho":"academias","limit":50},"confidence":0.95}
 
 Usuário: "Exportar academias em Belo Horizonte"
 Resposta: {"action":"export","filters":{"uf":"MG","municipio":"Belo Horizonte","nicho":"academias"},"confidence":0.90}

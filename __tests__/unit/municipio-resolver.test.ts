@@ -83,31 +83,31 @@ describe('not_found', () => {
 // found — exactly 1 row
 // ---------------------------------------------------------------------------
 describe('found — 1 match', () => {
-  it('São Paulo (SP) resolves to codigo_f', async () => {
+  it('São Paulo (SP) resolves to codigo_rf', async () => {
     const client = makeClient([{ codigo: '3550308', nome: 'SAO PAULO', uf: 'SP' }])
     const result = await resolveMunicipio(client as never, 'São Paulo', 'SP')
     expect(result).toEqual({ type: 'found', codigo: '3550308', nome: 'SAO PAULO', uf: 'SP' })
   })
 
-  it('Rio de Janeiro (RJ) resolves to codigo_f', async () => {
+  it('Rio de Janeiro (RJ) resolves to codigo_rf', async () => {
     const client = makeClient([{ codigo: '3304557', nome: 'RIO DE JANEIRO', uf: 'RJ' }])
     const result = await resolveMunicipio(client as never, 'Rio de Janeiro', 'RJ')
     expect(result).toEqual({ type: 'found', codigo: '3304557', nome: 'RIO DE JANEIRO', uf: 'RJ' })
   })
 
-  it('Manaus (AM) resolves to codigo_f', async () => {
+  it('Manaus (AM) resolves to codigo_rf', async () => {
     const client = makeClient([{ codigo: '1302603', nome: 'MANAUS', uf: 'AM' }])
     const result = await resolveMunicipio(client as never, 'Manaus')
     expect(result).toEqual({ type: 'found', codigo: '1302603', nome: 'MANAUS', uf: 'AM' })
   })
 
-  it('Blumenau (SC) resolves to codigo_f', async () => {
+  it('Blumenau (SC) resolves to codigo_rf', async () => {
     const client = makeClient([{ codigo: '4202404', nome: 'BLUMENAU', uf: 'SC' }])
     const result = await resolveMunicipio(client as never, 'Blumenau', 'SC')
     expect(result).toEqual({ type: 'found', codigo: '4202404', nome: 'BLUMENAU', uf: 'SC' })
   })
 
-  it('Porto Velho (RO) resolves to codigo_f', async () => {
+  it('Porto Velho (RO) resolves to codigo_rf', async () => {
     const client = makeClient([{ codigo: '1100205', nome: 'PORTO VELHO', uf: 'RO' }])
     const result = await resolveMunicipio(client as never, 'Porto Velho', 'RO')
     expect(result).toEqual({ type: 'found', codigo: '1100205', nome: 'PORTO VELHO', uf: 'RO' })

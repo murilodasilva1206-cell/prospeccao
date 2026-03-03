@@ -1,24 +1,20 @@
 // ---------------------------------------------------------------------------
 // Served leads deduplication repository.
 //
-// Tracks which CNPJs were already returned to an actor for a given search intent,
-// preventing the same leads from being surfaced repeatedly to the same user.
+// Tracks which CNPJs were already returned to an actor, preventing the same
+// leads from being surfaced again to the same user regardless of search intent.
 //
 // actor_id = AuthContext.actor ('session:<user_id>' or 'api_key:<label>').
 // Each actor maintains an independent dedup pool, so two users on the same
-// workspace each see a fresh lead pool (migration 017).
+// workspace each see a fresh lead pool (migrations 017 + 021).
 //
-// Fingerprint: SHA-256 of a canonical JSON object containing the search filters.
-// This groups queries that have the same effective intent (same uf + city + sector)
-// even if the user phrased them differently (post-CNAE resolution).
-//
-// Retention window: 30 days (hardcoded; configurable per call if needed).
+// Dedup model (migration 021): global per actor+cnpj — a CNPJ served to an
+// actor is excluded forever, independent of query_fingerprint or time window.
+// query_fingerprint is still recorded in markAsServed for audit/analytics.
 // ---------------------------------------------------------------------------
 
 import { createHash } from 'crypto'
 import type { PoolClient } from 'pg'
-
-const RETENTION_DAYS = 30
 
 export interface ServedLeadsFilters {
   uf?: string | null
@@ -53,26 +49,26 @@ export function buildQueryFingerprint(filters: ServedLeadsFilters): string {
 }
 
 /**
- * Returns a Set of CNPJs already served to this actor (user) for the given
- * fingerprint within the retention window.
+ * Returns a Set of ALL CNPJs ever served to this actor (global, no expiry).
  *
  * actorId = AuthContext.actor — 'session:<user_id>' or 'api_key:<label>'.
- * Each actor has an independent dedup pool (migration 017).
+ * Each actor has an independent dedup pool (migrations 017 + 021).
+ *
+ * Note: for very active actors this set can grow large.  Future improvement:
+ * push exclusion to SQL with a NOT EXISTS / anti-join to avoid loading the
+ * full set into Node.js memory.
  */
 export async function getServedCnpjs(
   client: PoolClient,
   workspaceId: string,
   actorId: string,
-  fingerprint: string,
 ): Promise<Set<string>> {
   const { rows } = await client.query<{ cnpj: string }>(
     `SELECT cnpj
      FROM agent_served_leads
      WHERE workspace_id = $1
-       AND actor_id = $2
-       AND query_fingerprint = $3
-       AND served_at > NOW() - ($4 * INTERVAL '1 day')`,
-    [workspaceId, actorId, fingerprint, RETENTION_DAYS],
+       AND actor_id = $2`,
+    [workspaceId, actorId],
   )
   return new Set(rows.map((r) => r.cnpj))
 }
