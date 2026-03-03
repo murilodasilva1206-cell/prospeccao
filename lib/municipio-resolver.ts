@@ -1,12 +1,13 @@
 // ---------------------------------------------------------------------------
 // Municipio resolver — converts a free-text municipality name to the numeric
-// codigo_f used in the cnpj_completo table.
+// codigo_rf used in the cnpj_completo table.
 //
 // The resolver queries `mapeamento_municipios` with unaccent + ILIKE so that
 // "São Paulo", "sao paulo", and "SAO PAULO" all resolve to the same code.
 // Numeric inputs (already a code) are returned without a DB round-trip.
 //
 // Requires: `unaccent` extension + migration 019 indexes.
+// Column: codigo_rf (not codigo_f) — matches the actual mapeamento_municipios schema.
 // If the table/extension is not available, the resolver returns `not_found`
 // and logs a warning so the caller can degrade gracefully.
 // ---------------------------------------------------------------------------
@@ -28,7 +29,7 @@ export type MunicipioResult =
 const NUMERIC_RE = /^\d+$/
 
 const RESOLVER_SQL = `
-  SELECT codigo_f       AS codigo,
+  SELECT codigo_rf      AS codigo,
          nome_municipio AS nome,
          uf
   FROM   mapeamento_municipios

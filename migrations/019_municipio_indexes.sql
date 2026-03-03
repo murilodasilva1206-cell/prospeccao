@@ -28,11 +28,11 @@ CREATE INDEX IF NOT EXISTS idx_map_mun_uf_nome
     ON mapeamento_municipios (uf, nome_municipio);
 
 -- ---------------------------------------------------------------------------
--- 3. Index on codigo_f
+-- 3. Index on codigo_rf
 --    Used by: lookups that start from a code (reverse resolution, future use).
 -- ---------------------------------------------------------------------------
-CREATE INDEX IF NOT EXISTS idx_map_mun_codigo_f
-    ON mapeamento_municipios (codigo_f);
+CREATE INDEX IF NOT EXISTS idx_map_mun_codigo_rf
+    ON mapeamento_municipios (codigo_rf);
 
 -- ---------------------------------------------------------------------------
 -- 4. Expression index on unaccent(lower(nome_municipio))
