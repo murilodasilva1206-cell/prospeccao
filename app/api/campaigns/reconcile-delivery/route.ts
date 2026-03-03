@@ -1,4 +1,7 @@
-// POST /api/campaigns/reconcile-delivery — delivery timeout watchdog (Vercel Cron)
+// GET|POST /api/campaigns/reconcile-delivery — delivery timeout watchdog (Vercel Cron)
+//
+// Vercel Cron invokes via GET; POST is kept for manual/curl invocation.
+// Both verbs share the same handler.
 //
 // Finds all campaign recipients that have been in 'sent' status for longer than
 // DELIVERY_TIMEOUT_MINUTES without a delivery confirmation, and marks them as
@@ -27,7 +30,7 @@ import pool from '@/lib/database'
 import { env } from '@/lib/env'
 import { logger } from '@/lib/logger'
 
-export async function POST(request: NextRequest) {
+async function handler(request: NextRequest): Promise<NextResponse> {
   if (!env.CRON_SECRET) {
     return NextResponse.json({ error: 'CRON_SECRET nao configurado' }, { status: 503 })
   }
@@ -118,3 +121,7 @@ export async function POST(request: NextRequest) {
     client.release()
   }
 }
+
+// Vercel Cron fires GET; keep POST for manual/curl invocation.
+export const GET  = handler
+export const POST = handler

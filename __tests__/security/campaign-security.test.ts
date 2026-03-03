@@ -107,7 +107,7 @@ import { POST as pauseRoute } from '@/app/api/campaigns/[id]/pause/route'
 import { POST as resumeRoute } from '@/app/api/campaigns/[id]/resume/route'
 import { PATCH as automationRoute } from '@/app/api/campaigns/[id]/automation/route'
 import { GET as statusRoute } from '@/app/api/campaigns/[id]/status/route'
-import { POST as processRoute } from '@/app/api/campaigns/process/route'
+import { GET as processRouteGet, POST as processRoute } from '@/app/api/campaigns/process/route'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -649,6 +649,22 @@ describe('Security: cron process endpoint requires CRON_SECRET', () => {
     const res = await processRoute(
       makeRequest('/api/campaigns/process', undefined, `Bearer ${wrongToken}`),
     )
+    expect(res.status).toBe(401)
+  })
+
+  it('GET verb is accepted (Vercel Cron uses GET) and respects CRON_SECRET auth', async () => {
+    // Vercel Cron fires GET — the handler must accept it and enforce the same auth.
+    vi.mocked(findAndClaimSendableCampaigns).mockResolvedValue([])
+    const res = await processRouteGet(
+      makeGetRequest('/api/campaigns/process', `Bearer ${mockEnv.CRON_SECRET}`),
+    )
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.data.processed).toBe(0)
+  })
+
+  it('GET verb also returns 401 without Authorization header', async () => {
+    const res = await processRouteGet(makeGetRequest('/api/campaigns/process'))
     expect(res.status).toBe(401)
   })
 })

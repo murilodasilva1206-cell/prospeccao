@@ -1,4 +1,7 @@
-// POST /api/campaigns/process — campaign scheduler worker (Vercel Cron or external scheduler, e.g. GitHub Actions)
+// GET|POST /api/campaigns/process — campaign scheduler worker (Vercel Cron or external scheduler)
+//
+// Vercel Cron invokes via GET; POST is kept for manual/curl invocation.
+// Both verbs share the same handler.
 //
 // Finds all campaigns in 'sending' state whose next_send_at has elapsed and
 // processes them autonomously — no browser presence required.
@@ -58,9 +61,9 @@ const MAX_CAMPAIGNS_PER_TICK = 10
 // Max recipients per campaign per tick (keeps cron execution under ~30 s)
 const MAX_RECIPIENTS_PER_CAMPAIGN = 10
 
-export async function POST(request: NextRequest) {
+async function handler(request: NextRequest): Promise<NextResponse> {
   const requestId = crypto.randomUUID()
-  const log = logger.child({ requestId, route: 'POST /api/campaigns/process' })
+  const log = logger.child({ requestId, route: 'GET|POST /api/campaigns/process' })
 
   // ---------------------------------------------------------------------------
   // Auth: CRON_SECRET
@@ -366,3 +369,7 @@ export async function POST(request: NextRequest) {
     },
   })
 }
+
+// Vercel Cron fires GET; keep POST for manual/curl invocation.
+export const GET  = handler
+export const POST = handler
