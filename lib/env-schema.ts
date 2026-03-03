@@ -86,6 +86,22 @@ export const EnvSchema = z.object({
   S3_REGION: z.string().optional(),
   // Optional: set for Cloudflare R2 or custom S3-compatible endpoints
   S3_ENDPOINT: z.string().url().optional(),
+
+  // ---------------------------------------------------------------------------
+  // Query performance escape valve
+  //
+  // When true, /api/busca and /api/agente skip the COUNT(*) query entirely and
+  // return total: null in the pagination metadata.  Use this as a temporary
+  // relief valve on large tables (≥ 10 M rows) while permanent indexes
+  // (migration 018) are still being built, or on restricted DB plans where
+  // COUNT(*) on cnpj_completo is prohibitively slow.
+  //
+  // After migration 018 indexes are in place, leave this false (the default).
+  // ---------------------------------------------------------------------------
+  DB_SKIP_COUNT: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
 }).superRefine((data, ctx) => {
   // S3 credentials required when media storage is enabled
   if (data.MEDIA_STORAGE_ENABLED) {

@@ -14,10 +14,12 @@ const pool = new Pool({
   max: 10,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: env.DB_CONNECT_TIMEOUT_MS,
-  // Server-side query timeout — strongest guard against long-running queries
-  statement_timeout: 5000,
-  // Client-side timeout (slightly longer than statement_timeout)
-  query_timeout: 6000,
+  // Server-side query timeout — strong guard against runaway queries on large tables.
+  // Set to 20 s to accommodate COUNT(*) and paginated scans on the 28 M-row cnpj_completo
+  // table before the permanent fix (indexes in migration 018) is in place.
+  statement_timeout: 20000,
+  // Client-side guard — slightly above statement_timeout so the DB error fires first.
+  query_timeout: 25000,
 })
 
 // Warn at startup when certificate validation is disabled so it is never

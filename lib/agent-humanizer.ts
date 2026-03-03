@@ -8,7 +8,7 @@
 import type { PublicEmpresa } from '@/lib/mask-output'
 
 interface HumanizeInput {
-  total: number
+  total: number | null  // null when DB_SKIP_COUNT=true
   count: number         // how many returned in this page
   filters: {
     uf?: string
@@ -55,7 +55,9 @@ export function humanizeSearchResult(input: HumanizeInput): {
 
   // Primary headline
   const headline =
-    total === 0
+    total === null
+      ? `Exibindo ${count} ${sector}${location}${contactHint}.`
+      : total === 0
       ? `Nenhuma empresa encontrada para ${sector}${location}.`
       : total === 1
       ? `1 empresa encontrada — ${sector}${location}${contactHint}.`
@@ -63,8 +65,13 @@ export function humanizeSearchResult(input: HumanizeInput): {
 
   // Subtitle
   let subtitle = ''
-  if (total > 0 && count > 0) {
-    const showing = count < total ? `Mostrando ${count} de ${total}.` : `Mostrando todas as ${total}.`
+  if ((total === null || total > 0) && count > 0) {
+    const showing =
+      total === null
+        ? `Exibindo ${count} resultados.`
+        : count < total
+        ? `Mostrando ${count} de ${total}.`
+        : `Mostrando todas as ${total}.`
     const canContact = data.filter((e) => e.telefone1 || e.email).length
     const withContact =
       canContact > 0 ? ` ${canContact} com contato disponível.` : ''
@@ -74,7 +81,7 @@ export function humanizeSearchResult(input: HumanizeInput): {
   return {
     headline,
     subtitle,
-    hasCta: total > 0 && data.some((e) => e.telefone1 || e.telefone2),
+    hasCta: (total === null || total > 0) && data.some((e) => e.telefone1 || e.telefone2),
   }
 }
 

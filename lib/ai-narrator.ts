@@ -50,7 +50,7 @@ export async function narrateSearchResult(
   originalQuery: string,
   intent: AgentIntent,
   results: PublicEmpresa[],
-  total: number,
+  total: number | null,
   profile?: LlmCallConfig,
 ): Promise<NarratorResult> {
   const filters = intent.filters ?? {}
@@ -66,7 +66,7 @@ export async function narrateSearchResult(
   const location = [filters.municipio, filters.uf].filter(Boolean).join(', ')
   const userMessage = [
     `Busca do usuário: "${originalQuery}"`,
-    `Total no banco: ${total} empresas.`,
+    total !== null ? `Total no banco: ${total} empresas.` : 'Total no banco: desconhecido (contagem desabilitada).',
     `Mostrando: ${results.length}.`,
     `Com telefone: ${withPhone}. Com e-mail: ${withEmail}.`,
     location ? `Localização: ${location}.` : '',

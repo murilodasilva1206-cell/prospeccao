@@ -31,6 +31,7 @@ export default defineConfig({
       S3_ACCESS_KEY_ID: 'test-key-id',
       S3_SECRET_ACCESS_KEY: 'test-secret-key',
       S3_REGION: 'us-east-1',
+      DB_SKIP_COUNT: 'false',
     },
     coverage: {
       provider: 'v8',

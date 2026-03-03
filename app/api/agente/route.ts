@@ -222,7 +222,6 @@ export async function POST(request: NextRequest) {
     const client = await pool.connect()
     try {
       const requestedLimit = filters.limit
-      const { text: countText, values: countValues } = buildCountQuery(filters)
 
       log.debug({ filters, workspace_id: authCtx.workspace_id, actor: authCtx.actor }, 'Agent executing search query')
 
@@ -236,14 +235,24 @@ export async function POST(request: NextRequest) {
         situacao_cadastral: filters.situacao_cadastral,
       })
 
-      // Run count + served-leads lookup before the pagination loop.
+      // Run count (optional) + served-leads lookup before the pagination loop.
       // getServedCnpjs failure (table not yet migrated) falls back to empty set.
+      // COUNT(*) can be skipped via DB_SKIP_COUNT=true on large tables without indexes.
+      const countPromise = env.DB_SKIP_COUNT
+        ? Promise.resolve(null)
+        : (() => {
+            const { text: countText, values: countValues } = buildCountQuery(filters)
+            return client.query(countText, countValues)
+          })()
+
       const [countResult, servedSet] = await Promise.all([
-        client.query(countText, countValues),
+        countPromise,
         getServedCnpjs(client, authCtx.workspace_id, authCtx.dedup_actor_id, fingerprint)
           .catch(() => new Set<string>()),
       ])
-      const total = Number(countResult.rows[0]?.total ?? 0)
+      const total: number | null = countResult !== null
+        ? Number(countResult.rows[0]?.total ?? 0)
+        : null
 
       // Incremental pagination: fetch one page at a time until we collect
       // requestedLimit fresh (never-served) results or the DB is exhausted.
@@ -308,7 +317,7 @@ export async function POST(request: NextRequest) {
           total,
           page: filters.page,
           limit: filters.limit,
-          pages: Math.ceil(total / filters.limit),
+          pages: total !== null ? Math.ceil(total / filters.limit) : null,
         },
         metadata: { latencyMs, parseSuccess, confidence: intent.confidence, narratorSource: narration.source },
       })

@@ -9,6 +9,7 @@ import { buildContactsQuery, buildCountQuery } from '@/lib/query-builder'
 import { maskContact } from '@/lib/mask-output'
 import { getCnaeResolverService } from '@/lib/cnae-resolver-service'
 import { requireWorkspaceAuth, authErrorResponse, type AuthContext } from '@/lib/whatsapp/auth-middleware'
+import { env } from '@/lib/env'
 
 export async function GET(request: NextRequest) {
   const requestId = crypto.randomUUID()
@@ -93,17 +94,26 @@ export async function GET(request: NextRequest) {
     const client = await pool.connect()
     try {
       const { text, values } = buildContactsQuery(filters)
-      const { text: countText, values: countValues } = buildCountQuery(filters)
 
       log.debug({ filters, workspace_id: auth.workspace_id, actor: auth.actor }, 'Executando busca')
 
-      const [rows, countResult] = await Promise.all([
-        client.query(text, values),
-        client.query(countText, countValues),
-      ])
+      let data: ReturnType<typeof maskContact>[]
+      let total: number | null = null
 
-      const data = rows.rows.map(maskContact)
-      const total = Number(countResult.rows[0]?.total ?? 0)
+      if (env.DB_SKIP_COUNT) {
+        // Skip COUNT(*) — returns total: null in pagination metadata.
+        // Use when the table is large and indexes are not yet in place.
+        const rows = await client.query(text, values)
+        data = rows.rows.map(maskContact)
+      } else {
+        const { text: countText, values: countValues } = buildCountQuery(filters)
+        const [rows, countResult] = await Promise.all([
+          client.query(text, values),
+          client.query(countText, countValues),
+        ])
+        data = rows.rows.map(maskContact)
+        total = Number(countResult.rows[0]?.total ?? 0)
+      }
 
       log.info({ resultCount: data.length, total, workspace_id: auth.workspace_id, actor: auth.actor }, 'Busca concluida')
 
@@ -113,7 +123,7 @@ export async function GET(request: NextRequest) {
           total,
           page: filters.page,
           limit: filters.limit,
-          pages: Math.ceil(total / filters.limit),
+          pages: total !== null ? Math.ceil(total / filters.limit) : null,
         },
       })
     } finally {
