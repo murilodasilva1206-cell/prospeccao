@@ -67,6 +67,11 @@ export const EnvSchema = z.object({
   // returns 503 so the app can still start in development without it.
   CRON_SECRET: z.string().min(32).optional(),
 
+  // Minutes a 'sent' recipient can remain without a delivered/read webhook
+  // before the delivery watchdog marks it as failed_timeout.
+  // Default 30 minutes. Set to 0 to disable the watchdog.
+  DELIVERY_TIMEOUT_MINUTES: z.coerce.number().int().min(0).max(1440).default(30),
+
   // ---------------------------------------------------------------------------
   // S3-compatible media storage (AWS S3 or Cloudflare R2)
   //

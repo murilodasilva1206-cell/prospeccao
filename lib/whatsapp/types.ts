@@ -125,6 +125,7 @@ export type WhatsAppEventType =
   | 'message.sent'
   | 'message.delivered'
   | 'message.read'
+  | 'message.failed'
   | 'connection.update'
   | 'qr.updated'
   | 'error'

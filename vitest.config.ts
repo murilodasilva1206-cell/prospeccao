@@ -32,6 +32,8 @@ export default defineConfig({
       S3_SECRET_ACCESS_KEY: 'test-secret-key',
       S3_REGION: 'us-east-1',
       DB_SKIP_COUNT: 'false',
+      // Delivery watchdog timeout — 30 min default; integration tests insert recipients 2h old
+      DELIVERY_TIMEOUT_MINUTES: '30',
     },
     coverage: {
       provider: 'v8',

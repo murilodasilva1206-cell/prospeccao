@@ -340,14 +340,30 @@ export class MetaAdapter implements IWhatsAppAdapter {
     if (!statusEntry) return null
 
     const typeMap: Record<string, WhatsAppEvent['type']> = {
-      sent: 'message.sent', delivered: 'message.delivered', read: 'message.read',
+      sent: 'message.sent',
+      delivered: 'message.delivered',
+      read: 'message.read',
+      failed: 'message.failed',
     }
-    const eventType = typeMap[String(statusEntry.status ?? '')] ?? 'message.sent'
+    const rawStatus = String(statusEntry.status ?? '')
+    // Unknown status values must NOT be silently promoted to message.sent — that would
+    // mark recipients as delivered when the provider sent an unrecognized status code.
+    // Return null so normalizeEvent falls through to the connection.update fallback.
+    const eventType = typeMap[rawStatus]
+    if (!eventType) return null
+    const errors = statusEntry.errors as Array<Record<string, unknown>> | undefined
+    const errorCode = errors?.[0]?.code ?? null
+    const errorTitle = errors?.[0]?.title ?? null
     return {
       type: eventType,
-      event_id: `${statusEntry.id ?? ''}-${statusEntry.status ?? ''}`,
+      event_id: `${statusEntry.id ?? ''}-${rawStatus}`,
       timestamp: statusEntry.timestamp ? new Date(Number(statusEntry.timestamp) * 1000) : new Date(),
-      payload: { message_id: statusEntry.id, status: statusEntry.status },
+      payload: {
+        message_id: statusEntry.id,
+        status: rawStatus,
+        error_code: errorCode,
+        error_reason: errorTitle,
+      },
     }
   }
 

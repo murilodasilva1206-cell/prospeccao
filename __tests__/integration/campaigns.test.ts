@@ -13,10 +13,13 @@ import { POST as startRoute } from '@/app/api/campaigns/[id]/start/route'
 import { POST as pauseRoute } from '@/app/api/campaigns/[id]/pause/route'
 import { POST as resumeRoute } from '@/app/api/campaigns/[id]/resume/route'
 import { GET as statusRoute } from '@/app/api/campaigns/[id]/status/route'
+import { POST as reconcileDeliveryRoute } from '@/app/api/campaigns/reconcile-delivery/route'
 import {
   claimPendingRecipients,
   finalizeCampaign,
   scheduleRecipientRetry,
+  updateRecipientStatusByProviderMessageId,
+  markRecipientDeliveredByProviderMessageId,
 } from '@/lib/campaign-repo'
 
 // ---------------------------------------------------------------------------
@@ -725,6 +728,448 @@ describe('Integration: claimPendingRecipients respects next_retry_at', () => {
       expect(recipients).toHaveLength(1)
       expect(recipients[0].cnpj).toBe('44555666000114')
     } finally {
+      client.release()
+    }
+  })
+})
+
+
+// ---------------------------------------------------------------------------
+// Integration: webhook failed event reconciles campaign counters
+// ---------------------------------------------------------------------------
+
+describe('Integration: updateRecipientStatusByProviderMessageId', () => {
+  let reconcileCampaignId: string | null = null
+  let reconcileRecipientId: string | null = null
+  let reconcileChannelId: string | null = null
+  const PROVIDER_MSG_ID = `wamid.reconcile-${Date.now()}`
+
+  beforeAll(async () => {
+    if (!dbAvailable || !testKeyId) return
+    const client = await pool.connect()
+    try {
+      // Create a minimal channel to bind the recipient to
+      const { rows: chRows } = await client.query<{ id: string }>(
+        `INSERT INTO whatsapp_channels
+           (workspace_id, name, provider, status, credentials_encrypted, webhook_secret)
+         VALUES ($1, 'Reconcile Test Channel', 'META_CLOUD', 'CONNECTED', 'enc-blob', 'secret')
+         RETURNING id`,
+        [TEST_WORKSPACE_ID],
+      )
+      reconcileChannelId = chRows[0].id
+
+      // Campaign in sending state with sent_count=1, failed_count=0
+      const { rows: camRows } = await client.query<{ id: string }>(
+        `INSERT INTO campaigns
+           (workspace_id, name, status, channel_id, total_count, sent_count, failed_count, created_by)
+         VALUES ($1, 'Reconcile Test Campaign', 'sending', $2, 1, 1, 0, $3)
+         RETURNING id`,
+        [TEST_WORKSPACE_ID, reconcileChannelId, testKeyId],
+      )
+      reconcileCampaignId = camRows[0].id
+
+      // Recipient already marked 'sent' with a known provider_message_id
+      const { rows: recRows } = await client.query<{ id: string }>(
+        `INSERT INTO campaign_recipients
+           (campaign_id, cnpj, razao_social, telefone, status, provider_message_id, sent_at)
+         VALUES ($1, '55666777000125', 'RECONCILE LTDA', '11900000001',
+                 'sent', $2, NOW())
+         RETURNING id`,
+        [reconcileCampaignId, PROVIDER_MSG_ID],
+      )
+      reconcileRecipientId = recRows[0].id
+    } finally {
+      client.release()
+    }
+  })
+
+  afterAll(async () => {
+    if (!dbAvailable) return
+    const client = await pool.connect()
+    try {
+      if (reconcileCampaignId) await client.query('DELETE FROM campaigns WHERE id = $1', [reconcileCampaignId])
+      if (reconcileChannelId) await client.query('DELETE FROM whatsapp_channels WHERE id = $1', [reconcileChannelId])
+    } finally {
+      client.release()
+    }
+  })
+
+  it('transitions recipient from sent → failed and adjusts campaign counters', async () => {
+    if (!dbAvailable || !reconcileCampaignId || !reconcileRecipientId || !reconcileChannelId) {
+      return expect(true).toBe(true)
+    }
+
+    const client = await pool.connect()
+    try {
+      const updated = await updateRecipientStatusByProviderMessageId(
+        client,
+        reconcileChannelId,
+        PROVIDER_MSG_ID,
+        'failed',
+        'Numero nao existe no WhatsApp',
+      )
+      expect(updated).toBe(true)
+
+      const { rows: recRows } = await client.query(
+        `SELECT status, error_message FROM campaign_recipients WHERE id = $1`,
+        [reconcileRecipientId],
+      )
+      expect(recRows[0].status).toBe('failed')
+      expect(recRows[0].error_message).toBe('Numero nao existe no WhatsApp')
+
+      const { rows: camRows } = await client.query(
+        `SELECT sent_count, failed_count FROM campaigns WHERE id = $1`,
+        [reconcileCampaignId],
+      )
+      expect(camRows[0].sent_count).toBe(0)
+      expect(camRows[0].failed_count).toBe(1)
+    } finally {
+      client.release()
+    }
+  })
+
+  it('idempotent: calling twice does not double-adjust counters', async () => {
+    if (!dbAvailable || !reconcileCampaignId || !reconcileChannelId) return expect(true).toBe(true)
+
+    const client = await pool.connect()
+    try {
+      // Recipient is already 'failed' from the previous test — second call must be a no-op
+      const updated = await updateRecipientStatusByProviderMessageId(
+        client,
+        reconcileChannelId,
+        PROVIDER_MSG_ID,
+        'failed',
+        'Chamada duplicada',
+      )
+      expect(updated).toBe(false)
+
+      const { rows: camRows } = await client.query(
+        `SELECT sent_count, failed_count FROM campaigns WHERE id = $1`,
+        [reconcileCampaignId],
+      )
+      // Counters must not have changed from the first call
+      expect(camRows[0].sent_count).toBe(0)
+      expect(camRows[0].failed_count).toBe(1)
+    } finally {
+      client.release()
+    }
+  })
+
+  it('returns false when provider_message_id does not match any sent recipient', async () => {
+    if (!dbAvailable || !reconcileChannelId) return expect(true).toBe(true)
+
+    const client = await pool.connect()
+    try {
+      const updated = await updateRecipientStatusByProviderMessageId(
+        client,
+        reconcileChannelId,
+        'wamid.nonexistent-999',
+        'failed',
+        'Never sent',
+      )
+      expect(updated).toBe(false)
+    } finally {
+      client.release()
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Integration: markRecipientDeliveredByProviderMessageId
+// ---------------------------------------------------------------------------
+
+describe('Integration: markRecipientDeliveredByProviderMessageId', () => {
+  let delivChannelId: string | null = null
+  let delivCampaignId: string | null = null
+  let delivRecipientId: string | null = null
+  const DELIV_MSG_ID = `wamid.deliv-${Date.now()}`
+
+  beforeAll(async () => {
+    if (!dbAvailable || !testKeyId) return
+    const client = await pool.connect()
+    try {
+      const { rows: chRows } = await client.query<{ id: string }>(
+        `INSERT INTO whatsapp_channels
+           (workspace_id, name, provider, status, credentials_encrypted, webhook_secret)
+         VALUES ($1, 'Delivered Test Channel', 'META_CLOUD', 'CONNECTED', 'enc-blob', 'secret')
+         RETURNING id`,
+        [TEST_WORKSPACE_ID],
+      )
+      delivChannelId = chRows[0].id
+
+      const { rows: camRows } = await client.query<{ id: string }>(
+        `INSERT INTO campaigns
+           (workspace_id, name, status, channel_id, total_count, sent_count, failed_count, created_by)
+         VALUES ($1, 'Delivered Test Campaign', 'sending', $2, 1, 1, 0, $3)
+         RETURNING id`,
+        [TEST_WORKSPACE_ID, delivChannelId, testKeyId],
+      )
+      delivCampaignId = camRows[0].id
+
+      const { rows: recRows } = await client.query<{ id: string }>(
+        `INSERT INTO campaign_recipients
+           (campaign_id, cnpj, razao_social, telefone, status, provider_message_id, sent_at)
+         VALUES ($1, '66777888000136', 'DELIVERED LTDA', '11900000002',
+                 'sent', $2, NOW())
+         RETURNING id`,
+        [delivCampaignId, DELIV_MSG_ID],
+      )
+      delivRecipientId = recRows[0].id
+    } finally {
+      client.release()
+    }
+  })
+
+  afterAll(async () => {
+    if (!dbAvailable) return
+    const client = await pool.connect()
+    try {
+      if (delivCampaignId) await client.query('DELETE FROM campaigns WHERE id = $1', [delivCampaignId])
+      if (delivChannelId) await client.query('DELETE FROM whatsapp_channels WHERE id = $1', [delivChannelId])
+    } finally {
+      client.release()
+    }
+  })
+
+  it('stamps delivered_at on a sent recipient and returns true', async () => {
+    if (!dbAvailable || !delivCampaignId || !delivRecipientId || !delivChannelId) {
+      return expect(true).toBe(true)
+    }
+    const client = await pool.connect()
+    try {
+      const updated = await markRecipientDeliveredByProviderMessageId(
+        client,
+        delivChannelId,
+        DELIV_MSG_ID,
+      )
+      expect(updated).toBe(true)
+
+      const { rows } = await client.query(
+        `SELECT delivered_at FROM campaign_recipients WHERE id = $1`,
+        [delivRecipientId],
+      )
+      expect(rows[0].delivered_at).not.toBeNull()
+      expect(rows[0].delivered_at).toBeInstanceOf(Date)
+    } finally {
+      client.release()
+    }
+  })
+
+  it('is idempotent: second call returns false and does not update delivered_at again', async () => {
+    if (!dbAvailable || !delivCampaignId || !delivRecipientId || !delivChannelId) {
+      return expect(true).toBe(true)
+    }
+    const client = await pool.connect()
+    try {
+      // Capture the delivered_at set by the previous test
+      const { rows: before } = await client.query(
+        `SELECT delivered_at FROM campaign_recipients WHERE id = $1`,
+        [delivRecipientId],
+      )
+      const firstDeliveredAt = (before[0].delivered_at as Date).getTime()
+
+      // Second call — recipient already has delivered_at set (WHERE delivered_at IS NULL fails)
+      const updated = await markRecipientDeliveredByProviderMessageId(
+        client,
+        delivChannelId,
+        DELIV_MSG_ID,
+      )
+      expect(updated).toBe(false)
+
+      const { rows: after } = await client.query(
+        `SELECT delivered_at FROM campaign_recipients WHERE id = $1`,
+        [delivRecipientId],
+      )
+      // Timestamp must not have changed
+      expect((after[0].delivered_at as Date).getTime()).toBe(firstDeliveredAt)
+    } finally {
+      client.release()
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Integration: reconcile-delivery watchdog
+// ---------------------------------------------------------------------------
+
+const WATCHDOG_CRON_TOKEN = 'test-cron-secret-this-is-32-chars!!'
+
+describe('Integration: reconcile-delivery watchdog', () => {
+  let watchdogChannelId: string | null = null
+  let watchdogCampaignId: string | null = null
+  let eligibleRecipientId: string | null = null   // delivered_at=NULL — must timeout
+  let protectedRecipientId: string | null = null  // delivered_at set  — must survive
+  const ELIGIBLE_MSG   = `wamid.wd-eligible-${Date.now()}`
+  const PROTECTED_MSG  = `wamid.wd-protected-${Date.now()}`
+
+  beforeAll(async () => {
+    if (!dbAvailable || !testKeyId) return
+    const client = await pool.connect()
+    try {
+      const { rows: chRows } = await client.query<{ id: string }>(
+        `INSERT INTO whatsapp_channels
+           (workspace_id, name, provider, status, credentials_encrypted, webhook_secret)
+         VALUES ($1, 'Watchdog Test Channel', 'META_CLOUD', 'CONNECTED', 'enc-blob', 'secret')
+         RETURNING id`,
+        [TEST_WORKSPACE_ID],
+      )
+      watchdogChannelId = chRows[0].id
+
+      // Campaign: sent_count=2 (one eligible, one protected by delivered_at)
+      const { rows: camRows } = await client.query<{ id: string }>(
+        `INSERT INTO campaigns
+           (workspace_id, name, status, channel_id, total_count, sent_count, failed_count, created_by)
+         VALUES ($1, 'Watchdog Test Campaign', 'sending', $2, 2, 2, 0, $3)
+         RETURNING id`,
+        [TEST_WORKSPACE_ID, watchdogChannelId, testKeyId],
+      )
+      watchdogCampaignId = camRows[0].id
+
+      // Eligible: sent 2 hours ago, delivered_at NULL → must be timed out
+      const { rows: r1 } = await client.query<{ id: string }>(
+        `INSERT INTO campaign_recipients
+           (campaign_id, cnpj, razao_social, telefone, status, provider_message_id, sent_at)
+         VALUES ($1, '77888999000147', 'ELIGIBLE LTDA', '11900000003',
+                 'sent', $2, NOW() - INTERVAL '2 hours')
+         RETURNING id`,
+        [watchdogCampaignId, ELIGIBLE_MSG],
+      )
+      eligibleRecipientId = r1[0].id
+
+      // Protected: sent 2 hours ago, delivered_at IS NOT NULL → must NOT be timed out
+      const { rows: r2 } = await client.query<{ id: string }>(
+        `INSERT INTO campaign_recipients
+           (campaign_id, cnpj, razao_social, telefone, status, provider_message_id, sent_at, delivered_at)
+         VALUES ($1, '88999000000158', 'PROTECTED LTDA', '11900000004',
+                 'sent', $2, NOW() - INTERVAL '2 hours', NOW() - INTERVAL '1 hour')
+         RETURNING id`,
+        [watchdogCampaignId, PROTECTED_MSG],
+      )
+      protectedRecipientId = r2[0].id
+    } finally {
+      client.release()
+    }
+  })
+
+  afterAll(async () => {
+    if (!dbAvailable) return
+    const client = await pool.connect()
+    try {
+      if (watchdogCampaignId) await client.query('DELETE FROM campaigns WHERE id = $1', [watchdogCampaignId])
+      if (watchdogChannelId) await client.query('DELETE FROM whatsapp_channels WHERE id = $1', [watchdogChannelId])
+    } finally {
+      client.release()
+    }
+  })
+
+  it('times out eligible recipient but protects one with delivered_at, adjusts counters', async () => {
+    if (!dbAvailable || !watchdogCampaignId || !eligibleRecipientId || !protectedRecipientId) {
+      return expect(true).toBe(true)
+    }
+
+    const req = new NextRequest('http://localhost/api/campaigns/reconcile-delivery', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${WATCHDOG_CRON_TOKEN}` },
+    })
+    const res = await reconcileDeliveryRoute(req)
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.ok).toBe(true)
+
+    const client = await pool.connect()
+    try {
+      // Eligible recipient must now be failed with the timeout error message
+      const { rows: r1 } = await client.query(
+        `SELECT status, error_message FROM campaign_recipients WHERE id = $1`,
+        [eligibleRecipientId],
+      )
+      expect(r1[0].status).toBe('failed')
+      expect(r1[0].error_message).toBe('timeout_sem_entrega')
+
+      // Protected recipient (delivered_at set) must remain sent
+      const { rows: r2 } = await client.query(
+        `SELECT status FROM campaign_recipients WHERE id = $1`,
+        [protectedRecipientId],
+      )
+      expect(r2[0].status).toBe('sent')
+
+      // Campaign: sent_count drops by 1 (eligible timed out), failed_count rises by 1
+      const { rows: cam } = await client.query(
+        `SELECT sent_count, failed_count FROM campaigns WHERE id = $1`,
+        [watchdogCampaignId],
+      )
+      expect(cam[0].sent_count).toBe(1)   // protected recipient still counts as sent
+      expect(cam[0].failed_count).toBe(1)
+    } finally {
+      client.release()
+    }
+  })
+
+  it('is idempotent: second watchdog run does not change already-failed counters', async () => {
+    if (!dbAvailable || !watchdogCampaignId) return expect(true).toBe(true)
+
+    const req = new NextRequest('http://localhost/api/campaigns/reconcile-delivery', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${WATCHDOG_CRON_TOKEN}` },
+    })
+    const res = await reconcileDeliveryRoute(req)
+    expect(res.status).toBe(200)
+
+    const client = await pool.connect()
+    try {
+      // Counters for this campaign must be unchanged from the first watchdog run
+      const { rows: cam } = await client.query(
+        `SELECT sent_count, failed_count FROM campaigns WHERE id = $1`,
+        [watchdogCampaignId],
+      )
+      expect(cam[0].sent_count).toBe(1)
+      expect(cam[0].failed_count).toBe(1)
+    } finally {
+      client.release()
+    }
+  })
+
+  it('GREATEST guard: sent_count never goes below 0 even when already at 0', async () => {
+    if (!dbAvailable || !testKeyId || !watchdogChannelId) return expect(true).toBe(true)
+
+    const client = await pool.connect()
+    let negCampaignId: string | null = null
+    try {
+      // Campaign artificially at sent_count=0 (counter out-of-sync scenario)
+      const { rows: camRows } = await client.query<{ id: string }>(
+        `INSERT INTO campaigns
+           (workspace_id, name, status, channel_id, total_count, sent_count, failed_count, created_by)
+         VALUES ($1, 'GREATEST Test Campaign', 'sending', $2, 1, 0, 0, $3)
+         RETURNING id`,
+        [TEST_WORKSPACE_ID, watchdogChannelId, testKeyId],
+      )
+      negCampaignId = camRows[0].id
+
+      // Recipient in sent status, eligible for timeout (2 hours old, no delivered_at)
+      await client.query(
+        `INSERT INTO campaign_recipients
+           (campaign_id, cnpj, razao_social, telefone, status, provider_message_id, sent_at)
+         VALUES ($1, '99000111000169', 'GREATEST LTDA', '11900000005',
+                 'sent', $2, NOW() - INTERVAL '2 hours')`,
+        [negCampaignId, `wamid.greatest-${Date.now()}`],
+      )
+
+      const req = new NextRequest('http://localhost/api/campaigns/reconcile-delivery', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${WATCHDOG_CRON_TOKEN}` },
+      })
+      const res = await reconcileDeliveryRoute(req)
+      expect(res.status).toBe(200)
+
+      const { rows: cam } = await client.query(
+        `SELECT sent_count, failed_count FROM campaigns WHERE id = $1`,
+        [negCampaignId],
+      )
+      // GREATEST(0 - 1, 0) = 0 — never negative
+      expect(cam[0].sent_count).toBeGreaterThanOrEqual(0)
+      expect(cam[0].failed_count).toBe(1)
+    } finally {
+      if (negCampaignId) await client.query('DELETE FROM campaigns WHERE id = $1', [negCampaignId])
       client.release()
     }
   })

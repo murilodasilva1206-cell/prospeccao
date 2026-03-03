@@ -53,6 +53,8 @@ export interface CampaignRecipient {
   provider_message_id: string | null
   error_message: string | null
   sent_at: Date | null
+  /** Set when a delivered or read webhook is received (migration 022). */
+  delivered_at: Date | null
   processing_started_at: Date | null
   retry_count: number
   next_retry_at: Date | null
@@ -107,6 +109,7 @@ function rowToRecipient(row: Record<string, unknown>): CampaignRecipient {
     provider_message_id: (row.provider_message_id as string | null) ?? null,
     error_message: (row.error_message as string | null) ?? null,
     sent_at: row.sent_at ? new Date(row.sent_at as string) : null,
+    delivered_at: row.delivered_at ? new Date(row.delivered_at as string) : null,
     processing_started_at: row.processing_started_at ? new Date(row.processing_started_at as string) : null,
     retry_count: Number(row.retry_count ?? 0),
     next_retry_at: row.next_retry_at ? new Date(row.next_retry_at as string) : null,
@@ -478,6 +481,80 @@ export async function updateRecipientStatus(
       extra.sent_at ?? null,
     ],
   )
+}
+
+/**
+ * Reconcile a campaign recipient when a provider webhook reports a delivery
+ * failure.  Only transitions recipients that are currently 'sent' (idempotent:
+ * already-failed rows are skipped).
+ *
+ * When a recipient is moved from 'sent' → 'failed', the campaign counters are
+ * adjusted atomically: sent_count -1, failed_count +1.  This keeps the counters
+ * consistent with the actual recipient state and prevents counting failures as
+ * delivered messages.
+ *
+ * Matched by (channel_id, provider_message_id) because the webhook handler only
+ * knows the provider-assigned message ID, not the internal recipient UUID.
+ */
+export async function updateRecipientStatusByProviderMessageId(
+  client: PoolClient,
+  channelId: string,
+  providerMessageId: string,
+  status: 'failed',
+  errorMessage: string,
+): Promise<boolean> {
+  // Use a CTE to atomically update the recipient and grab its campaign_id in one
+  // round-trip, then update campaign counters in the same query.
+  const { rows } = await client.query(
+    `WITH updated AS (
+       UPDATE campaign_recipients
+       SET status        = $3,
+           error_message = $4
+       WHERE provider_message_id = $2
+         AND campaign_id IN (
+           SELECT id FROM campaigns WHERE channel_id = $1
+         )
+         AND status = 'sent'
+       RETURNING campaign_id
+     )
+     UPDATE campaigns
+     SET sent_count   = GREATEST(sent_count   - (SELECT COUNT(*) FROM updated), 0),
+         failed_count = failed_count + (SELECT COUNT(*) FROM updated)
+     WHERE id IN (SELECT campaign_id FROM updated)
+     RETURNING id`,
+    [channelId, providerMessageId, status, errorMessage],
+  )
+  return rows.length > 0
+}
+
+/**
+ * Records delivery confirmation on a campaign recipient when a 'delivered' or
+ * 'read' webhook arrives.  Sets delivered_at = NOW() on the matching 'sent'
+ * recipient so the delivery watchdog does not time it out later.
+ *
+ * Idempotent: if delivered_at is already set the UPDATE matches no rows.
+ * Safe: only touches rows with status='sent' to avoid re-opening closed states.
+ *
+ * Returns true if a row was updated, false otherwise (no match or already set).
+ */
+export async function markRecipientDeliveredByProviderMessageId(
+  client: PoolClient,
+  channelId: string,
+  providerMessageId: string,
+): Promise<boolean> {
+  const { rows } = await client.query(
+    `UPDATE campaign_recipients
+     SET delivered_at = NOW()
+     WHERE provider_message_id = $2
+       AND campaign_id IN (
+         SELECT id FROM campaigns WHERE channel_id = $1
+       )
+       AND status = 'sent'
+       AND delivered_at IS NULL
+     RETURNING id`,
+    [channelId, providerMessageId],
+  )
+  return rows.length > 0
 }
 
 // ---------------------------------------------------------------------------

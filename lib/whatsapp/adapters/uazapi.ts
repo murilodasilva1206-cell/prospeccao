@@ -369,21 +369,24 @@ export class UazapiAdapter implements IWhatsAppAdapter {
     if (type !== 'message.ack' && type !== 'ack') return null
 
     const messageId = payload.messageId ?? ''
-    // UAZAPI ack: 1=sent, 2=delivered, 3=read
+    // UAZAPI ack: -1=failed, 0=error, 1=sent, 2=delivered, 3=read
     const ack = payload.ack ?? 0
     const typeMap: Record<number, WhatsAppEvent['type']> = {
+      [-1]: 'message.failed',
+      0: 'message.failed',
       1: 'message.sent',
       2: 'message.delivered',
       3: 'message.read',
     }
     const eventType = typeMap[ack] ?? 'message.sent'
-    const statusLabel = ack === 3 ? 'read' : ack === 2 ? 'delivered' : 'sent'
+    const statusLabel = ack === 3 ? 'read' : ack === 2 ? 'delivered' : ack <= 0 ? 'failed' : 'sent'
+    const errorReason = (payload as Record<string, unknown>).error as string | undefined ?? null
 
     return {
       type: eventType,
       event_id: `${messageId}-ack${ack}`,
       timestamp: new Date(),
-      payload: { message_id: messageId, status: statusLabel },
+      payload: { message_id: messageId, status: statusLabel, error_reason: errorReason },
     }
   }
 

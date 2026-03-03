@@ -147,7 +147,8 @@ export async function POST(request: NextRequest, { params }: Params) {
       } else if (
         event.type === 'message.delivered' ||
         event.type === 'message.read' ||
-        event.type === 'message.sent'
+        event.type === 'message.sent' ||
+        event.type === 'message.failed'
       ) {
         try {
           await handleStatusUpdate(client, event, { id: channelId })

@@ -420,14 +420,21 @@ export class EvolutionAdapter implements IWhatsAppAdapter {
       SERVER_ACK: 'message.sent',
       DELIVERY_ACK: 'message.delivered',
       READ: 'message.read',
+      // Error/nack variants from Evolution
+      ERROR: 'message.failed',
+      NACK: 'message.failed',
+      PLAYED: 'message.read',
     }
-    const eventType = typeMap[statusRaw] ?? 'message.sent'
+    // Unknown statuses are not silently mapped to message.sent to avoid false positives
+    const eventType = typeMap[statusRaw]
+    if (!eventType) return null
 
+    const errorReason = (data.update as Record<string, unknown> | undefined)?.reason as string | undefined ?? null
     return {
       type: eventType,
       event_id: `${messageId}-${statusRaw.toLowerCase()}`,
       timestamp: new Date(),
-      payload: { message_id: messageId, status: statusRaw.toLowerCase() },
+      payload: { message_id: messageId, status: statusRaw.toLowerCase(), error_reason: errorReason },
     }
   }
 

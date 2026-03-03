@@ -249,15 +249,25 @@ export async function handleInboundMessage(
 // ---------------------------------------------------------------------------
 
 import { updateMessageStatus } from './message-repo'
+import {
+  updateRecipientStatusByProviderMessageId,
+  markRecipientDeliveredByProviderMessageId,
+} from '@/lib/campaign-repo'
 import type { MessageStatus } from './types'
 
 /**
- * Handles 'message.delivered' and 'message.read' events.
- * Updates the status column of the matching outbound message row.
- * Matches by (channel_id, provider_message_id) — idempotent.
+ * Handles 'message.delivered', 'message.read', 'message.sent', and
+ * 'message.failed' events.
  *
- * Returns true if a row was updated, false if no matching message was found
- * (e.g. the message was sent before persistence was introduced).
+ * Side-effects (all idempotent):
+ *   1. Updates the status column of the matching outbound message row.
+ *   2. 'message.failed' → transitions campaign recipient from 'sent' → 'failed'
+ *      and adjusts campaign counters (sent_count -1, failed_count +1).
+ *   3. 'message.delivered' / 'message.read' → stamps delivered_at on the campaign
+ *      recipient so the delivery watchdog will NOT time it out later.
+ *      The recipient status stays 'sent' (campaign tracks "accepted by provider").
+ *
+ * Returns true if a message row was updated, false if not found.
  */
 export async function handleStatusUpdate(
   client: PoolClient,
@@ -267,6 +277,7 @@ export async function handleStatusUpdate(
   const payload = event.payload as {
     message_id?: string
     status?: string
+    error_reason?: string | null
   }
 
   const providerMessageId = payload.message_id ? String(payload.message_id) : null
@@ -276,14 +287,33 @@ export async function handleStatusUpdate(
     'message.sent':      'sent',
     'message.delivered': 'delivered',
     'message.read':      'read',
+    'message.failed':    'failed',
   }
 
   const newStatus = statusMap[event.type]
   if (!newStatus) return false
 
-  return updateMessageStatus(client, {
+  const updated = await updateMessageStatus(client, {
     channel_id: channel.id,
     provider_message_id: providerMessageId,
     status: newStatus,
   })
+
+  if (newStatus === 'failed') {
+    // Reconcile: recipient moves to failed, counters adjusted atomically.
+    const errorReason = payload.error_reason ? String(payload.error_reason) : 'Falha reportada pelo provider'
+    await updateRecipientStatusByProviderMessageId(
+      client,
+      channel.id,
+      providerMessageId,
+      'failed',
+      errorReason,
+    )
+  } else if (newStatus === 'delivered' || newStatus === 'read') {
+    // Stamp delivered_at so the delivery watchdog skips this recipient.
+    // Recipient status remains 'sent' — no DB CHECK constraint change needed.
+    await markRecipientDeliveredByProviderMessageId(client, channel.id, providerMessageId)
+  }
+
+  return updated
 }

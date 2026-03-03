@@ -198,6 +198,77 @@ describe('POST /api/whatsapp/webhook/META_CLOUD/:channelId', () => {
 })
 
 // ---------------------------------------------------------------------------
+// message.failed status event
+// ---------------------------------------------------------------------------
+describe('POST /api/whatsapp/webhook/META_CLOUD/:channelId — message.failed', () => {
+  it('processes a failed status event and returns 200', async (ctx) => {
+    if (!dbAvailable || !testChannelId) ctx.skip()
+
+    const rawBody = JSON.stringify({
+      entry: [{
+        changes: [{
+          value: {
+            statuses: [{
+              id: `wamid.fail-integration-${Date.now()}`,
+              status: 'failed',
+              timestamp: String(Math.floor(Date.now() / 1000)),
+              errors: [{ code: 131026, title: 'Message Undeliverable' }],
+            }],
+          },
+        }],
+      }],
+    })
+
+    const req = makeWebhookRequest('META_CLOUD', testChannelId!, rawBody, {
+      'x-hub-signature-256': metaSignature(rawBody),
+    })
+
+    const res = await webhookHandler(req, {
+      params: Promise.resolve({ provider: 'META_CLOUD', channelId: testChannelId! }),
+    })
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.ok).toBe(true)
+    expect(body.event_type).toBe('message.failed')
+  })
+
+  it('idempotency: same failed event twice → second returns duplicate=true', async (ctx) => {
+    if (!dbAvailable || !testChannelId) ctx.skip()
+
+    const failedMsgId = `wamid.fail-dedup-${Date.now()}`
+    const rawBody = JSON.stringify({
+      entry: [{
+        changes: [{
+          value: {
+            statuses: [{
+              id: failedMsgId,
+              status: 'failed',
+              timestamp: String(Math.floor(Date.now() / 1000)),
+            }],
+          },
+        }],
+      }],
+    })
+    const sig = metaSignature(rawBody)
+
+    const req1 = makeWebhookRequest('META_CLOUD', testChannelId!, rawBody, { 'x-hub-signature-256': sig })
+    const res1 = await webhookHandler(req1, {
+      params: Promise.resolve({ provider: 'META_CLOUD', channelId: testChannelId! }),
+    })
+    expect(res1.status).toBe(200)
+    expect((await res1.json()).duplicate).toBeUndefined()
+
+    const req2 = makeWebhookRequest('META_CLOUD', testChannelId!, rawBody, { 'x-hub-signature-256': sig })
+    const res2 = await webhookHandler(req2, {
+      params: Promise.resolve({ provider: 'META_CLOUD', channelId: testChannelId! }),
+    })
+    expect(res2.status).toBe(200)
+    expect((await res2.json()).duplicate).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Invalid path params
 // ---------------------------------------------------------------------------
 describe('POST /api/whatsapp/webhook — path validation', () => {

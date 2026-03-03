@@ -254,6 +254,59 @@ describe('EvolutionAdapter.normalizeEvent', () => {
     expect(event.payload.state).toBe('open')
   })
 
+  it('normalizes messages.update with ERROR status → message.failed', () => {
+    const raw = {
+      event: 'messages.update',
+      data: {
+        key: { id: 'evo-err-001', remoteJid: '5511@s.whatsapp.net' },
+        update: { status: 'ERROR', reason: 'Numero nao existe no WhatsApp' },
+      },
+    }
+    const event = adapter.normalizeEvent(raw)
+    expect(event.type).toBe('message.failed')
+    expect(event.event_id).toBe('evo-err-001-error')
+    expect(event.payload.message_id).toBe('evo-err-001')
+    expect(event.payload.error_reason).toBe('Numero nao existe no WhatsApp')
+  })
+
+  it('normalizes messages.update with NACK status → message.failed', () => {
+    const raw = {
+      event: 'messages.update',
+      data: {
+        key: { id: 'evo-nack-001' },
+        update: { status: 'NACK' },
+      },
+    }
+    const event = adapter.normalizeEvent(raw)
+    expect(event.type).toBe('message.failed')
+  })
+
+  it('normalizes messages.update with SERVER_ACK → message.sent', () => {
+    const raw = {
+      event: 'messages.update',
+      data: {
+        key: { id: 'evo-ack-001' },
+        update: { status: 'SERVER_ACK' },
+      },
+    }
+    const event = adapter.normalizeEvent(raw)
+    expect(event.type).toBe('message.sent')
+  })
+
+  it('returns null from normalizeStatusEvent for unknown messages.update status', () => {
+    // Unknown statuses must NOT silently become message.sent
+    const raw = {
+      event: 'messages.update',
+      data: {
+        key: { id: 'evo-unknown-001' },
+        update: { status: 'PENDING_REVIEW' },
+      },
+    }
+    // normalizeStatusEvent returns null → normalizeEvent falls through to connection.update
+    const event = adapter.normalizeEvent(raw)
+    expect(event.type).toBe('connection.update')
+  })
+
   it('falls back to connection.update for unknown event type', () => {
     const event = adapter.normalizeEvent({ event: 'unknown.thing', data: {} })
     expect(event.type).toBe('connection.update')

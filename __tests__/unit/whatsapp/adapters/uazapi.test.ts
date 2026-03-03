@@ -299,6 +299,54 @@ describe('UazapiAdapter.normalizeEvent', () => {
     expect(event.payload.status).toBe('connected')
   })
 
+  it('normalizes ack=-1 → message.failed', () => {
+    const raw = {
+      type: 'message.ack',
+      messageId: 'uaz-ack-fail-001',
+      ack: -1,
+      error: 'Phone not registered',
+    }
+    const event = adapter.normalizeEvent(raw)
+    expect(event.type).toBe('message.failed')
+    expect(event.event_id).toBe('uaz-ack-fail-001-ack-1')
+    expect(event.payload.message_id).toBe('uaz-ack-fail-001')
+    expect(event.payload.status).toBe('failed')
+    expect(event.payload.error_reason).toBe('Phone not registered')
+  })
+
+  it('normalizes ack=0 → message.failed', () => {
+    const raw = {
+      type: 'ack',
+      messageId: 'uaz-ack-fail-002',
+      ack: 0,
+    }
+    const event = adapter.normalizeEvent(raw)
+    expect(event.type).toBe('message.failed')
+    expect(event.payload.status).toBe('failed')
+    expect(event.payload.error_reason).toBeNull()
+  })
+
+  it('normalizes ack=1 → message.sent', () => {
+    const raw = { type: 'message.ack', messageId: 'uaz-ack-001', ack: 1 }
+    const event = adapter.normalizeEvent(raw)
+    expect(event.type).toBe('message.sent')
+    expect(event.payload.status).toBe('sent')
+  })
+
+  it('normalizes ack=2 → message.delivered', () => {
+    const raw = { type: 'message.ack', messageId: 'uaz-ack-002', ack: 2 }
+    const event = adapter.normalizeEvent(raw)
+    expect(event.type).toBe('message.delivered')
+    expect(event.payload.status).toBe('delivered')
+  })
+
+  it('normalizes ack=3 → message.read', () => {
+    const raw = { type: 'message.ack', messageId: 'uaz-ack-003', ack: 3 }
+    const event = adapter.normalizeEvent(raw)
+    expect(event.type).toBe('message.read')
+    expect(event.payload.status).toBe('read')
+  })
+
   it('falls back for unknown event type', () => {
     const event = adapter.normalizeEvent({ type: 'unknown' })
     expect(event.type).toBe('connection.update')

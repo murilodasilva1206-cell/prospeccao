@@ -260,6 +260,63 @@ describe('MetaAdapter.normalizeEvent', () => {
     expect(event.type).toBe('message.read')
   })
 
+  it('normalizes a failed status → message.failed', () => {
+    const raw = {
+      entry: [{
+        changes: [{
+          value: {
+            statuses: [{
+              id: 'wamid.fail001',
+              status: 'failed',
+              timestamp: '1700000003',
+              errors: [{ code: 131026, title: 'Message Undeliverable' }],
+            }],
+          },
+        }],
+      }],
+    }
+    const event = adapter.normalizeEvent(raw)
+    expect(event.type).toBe('message.failed')
+    expect(event.event_id).toBe('wamid.fail001-failed')
+    expect(event.payload.message_id).toBe('wamid.fail001')
+    expect(event.payload.error_code).toBe(131026)
+    expect(event.payload.error_reason).toBe('Message Undeliverable')
+  })
+
+  it('normalizes failed status without errors array — error fields are null', () => {
+    const raw = {
+      entry: [{
+        changes: [{
+          value: {
+            statuses: [{ id: 'wamid.fail002', status: 'failed', timestamp: '1700000004' }],
+          },
+        }],
+      }],
+    }
+    const event = adapter.normalizeEvent(raw)
+    expect(event.type).toBe('message.failed')
+    expect(event.payload.error_code).toBeNull()
+    expect(event.payload.error_reason).toBeNull()
+  })
+
+  it('unknown status value falls through to connection.update (NOT message.sent)', () => {
+    // Meta may add new statuses in the future (e.g. 'accepted', 'warning').
+    // An unknown status must NEVER be promoted to message.sent as that would
+    // incorrectly mark recipients as delivered.
+    const raw = {
+      entry: [{
+        changes: [{
+          value: {
+            statuses: [{ id: 'wamid.unk001', status: 'accepted', timestamp: '1700000005' }],
+          },
+        }],
+      }],
+    }
+    const event = adapter.normalizeEvent(raw)
+    expect(event.type).not.toBe('message.sent')
+    expect(event.type).toBe('connection.update')
+  })
+
   it('falls back to connection.update for unknown payload', () => {
     const event = adapter.normalizeEvent({ unknown: true })
     expect(event.type).toBe('connection.update')
