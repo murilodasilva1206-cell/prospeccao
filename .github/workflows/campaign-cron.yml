@@ -12,10 +12,21 @@ jobs:
     steps:
       - name: Call /api/campaigns/process
         run: |
+          APP_URL="${{ secrets.APP_URL }}"
+          APP_URL="${APP_URL//$'\r'/}"
+          APP_URL="${APP_URL//$'\n'/}"
+          APP_URL="${APP_URL%/}"
+
+          if [[ -z "$APP_URL" || ! "$APP_URL" =~ ^https?:// ]]; then
+            echo "::error::APP_URL invalida: '$APP_URL'"
+            exit 1
+          fi
+
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST "${{ secrets.APP_URL }}/api/campaigns/process" \
+            -X POST "$APP_URL/api/campaigns/process" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             -H "Content-Type: application/json")
+
           echo "HTTP status: $STATUS"
           case "$STATUS" in
             2*) exit 0 ;;
