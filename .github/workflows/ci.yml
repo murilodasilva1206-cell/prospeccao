@@ -32,13 +32,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history required for trufflehog diff scan
+          fetch-depth: 0
+
+      - name: Resolve base/head for TruffleHog
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+            HEAD="${{ github.sha }}"
+          fi
+
+          # Fallback para casos raros (ex.: before vazio/zeros)
+          if [[ -z "$BASE" || "$BASE" == "0000000000000000000000000000000000000000" ]]; then
+            BASE="$(git rev-parse HEAD~1 2>/dev/null || true)"
+          fi
+
+          echo "TH_BASE=$BASE" >> "$GITHUB_ENV"
+          echo "TH_HEAD=$HEAD" >> "$GITHUB_ENV"
+          echo "TruffleHog base=$BASE head=$HEAD"
+
+      - name: Skip TruffleHog when base=head
+        if: ${{ env.TH_BASE == env.TH_HEAD || env.TH_BASE == '' || env.TH_HEAD == '' }}
+        run: echo "Skipping TruffleHog: base/head invalid or identical"
+
       - name: TruffleHog OSS
+        if: ${{ env.TH_BASE != env.TH_HEAD && env.TH_BASE != '' && env.TH_HEAD != '' }}
         uses: trufflesecurity/trufflehog@main
         with:
           path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
+          base: ${{ env.TH_BASE }}
+          head: ${{ env.TH_HEAD }}
           extra_args: --debug --only-verified
 
   # ---------------------------------------------------------------------------
