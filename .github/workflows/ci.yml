@@ -56,7 +56,8 @@ jobs:
 
       - name: Skip TruffleHog when base=head
         if: ${{ env.TH_BASE == env.TH_HEAD || env.TH_BASE == '' || env.TH_HEAD == '' }}
-        run: echo "Skipping TruffleHog: base/head invalid or identical"
+        run: |
+          echo "Skipping TruffleHog: base/head invalid or identical"
 
       - name: TruffleHog OSS
         if: ${{ env.TH_BASE != env.TH_HEAD && env.TH_BASE != '' && env.TH_HEAD != '' }}
