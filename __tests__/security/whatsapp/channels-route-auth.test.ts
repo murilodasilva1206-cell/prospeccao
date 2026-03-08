@@ -231,8 +231,13 @@ describe('Security: /api/whatsapp/channels/* route authorization', () => {
     const { POST } = await import('@/app/api/whatsapp/channels/route')
     const res = await POST(makeRequest('POST', '/api/whatsapp/channels', {
       auth: VALID_BEARER,
-      // Attacker tries to inject a different workspace_id
-      body: { name: 'Chan', provider: 'META_CLOUD', credentials: {}, workspace_id: 'ws-attacker' },
+      // Attacker tries to inject a different workspace_id — must be ignored
+      body: {
+        name: 'Chan',
+        provider: 'META_CLOUD',
+        credentials: { access_token: 'EAAB', phone_number_id: '12345678' },
+        workspace_id: 'ws-attacker',
+      },
     }))
     // 201 = success; adapter mock returns { external_instance_id: 'ext-1' }
     expect(res.status).toBe(201)

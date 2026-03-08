@@ -38,9 +38,13 @@ export interface ChannelCredentials {
   waba_id?: string           // WhatsApp Business Account ID
   app_secret?: string        // App secret for HMAC webhook verification
 
-  // Evolution / UAZAPI
+  // Evolution
   instance_url?: string      // Base URL of the provider instance
-  api_key?: string           // API key for the provider admin panel
+  api_key?: string           // API key for the Evolution admin panel
+
+  // UAZAPI (split tokens: admin vs instance)
+  admin_token?: string       // UAZAPI admin token — used only for createChannel (POST /instance/init)
+  instance_token?: string    // UAZAPI instance token — used for connect/status/disconnect/send
 }
 
 // ---------------------------------------------------------------------------

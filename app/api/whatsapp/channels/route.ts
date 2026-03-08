@@ -105,10 +105,18 @@ export async function POST(request: NextRequest) {
         })
         channel.external_instance_id = external_instance_id
       } catch (adapterErr) {
-        // Credential validation failed — delete the row; never surface adapter internals
+        // Credential validation failed — delete the row; never surface adapter internals to client.
+        // Log HTTP status + message for diagnostics (tokens are never logged).
         const { deleteChannel } = await import('@/lib/whatsapp/channel-repo')
         await deleteChannel(client, channel.id)
-        log.warn({ err: adapterErr }, 'Validacao de credenciais falhou — canal removido')
+        const errMsg = adapterErr instanceof Error ? adapterErr.message : String(adapterErr)
+        // Extract HTTP status from error message like "UAZAPI createChannel falhou (401): ..."
+        const statusMatch = errMsg.match(/\((\d{3})\)/)
+        const httpStatus = statusMatch ? Number(statusMatch[1]) : null
+        log.warn(
+          { provider: body.provider, httpStatus, errMsg },
+          'Validacao de credenciais falhou — canal removido',
+        )
         return NextResponse.json(
           { error: 'Credenciais invalidas ou provider inacessivel' },
           { status: 422 },

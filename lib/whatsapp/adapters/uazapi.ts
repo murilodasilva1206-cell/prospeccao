@@ -2,10 +2,10 @@
 // UAZAPI adapter
 //
 // Connection flow: QR-based (similar to Evolution).
-//   createChannel() → POST /instance/init
-//   startConnection() → GET /instance/qrcode
-//   getConnectionStatus() → GET /instance/status
-//   disconnect() → POST /instance/logout
+//   createChannel()      → POST /instance/init        (header: admintoken)
+//   startConnection()    → POST /instance/connect      (header: token)
+//   getConnectionStatus()→ GET  /instance/status       (header: token)
+//   disconnect()         → POST /instance/disconnect   (header: token)
 //
 // Webhook verification: compare Authorization header with channel.webhook_secret
 //
@@ -28,9 +28,18 @@ export class UazapiAdapter implements IWhatsAppAdapter {
     return creds.instance_url.replace(/\/$/, '')
   }
 
-  private headers(creds: ChannelCredentials): Record<string, string> {
+  /** Header for admin operations (createChannel). Uses admintoken header. */
+  private adminHeaders(creds: ChannelCredentials): Record<string, string> {
     return {
-      Authorization: `Bearer ${creds.api_key ?? ''}`,
+      admintoken: creds.admin_token ?? '',
+      'Content-Type': 'application/json',
+    }
+  }
+
+  /** Header for instance operations (connect/status/disconnect/send). Uses token header. */
+  private instanceHeaders(creds: ChannelCredentials): Record<string, string> {
+    return {
+      token: creds.instance_token ?? '',
       'Content-Type': 'application/json',
     }
   }
@@ -39,15 +48,15 @@ export class UazapiAdapter implements IWhatsAppAdapter {
     channel: Channel,
     creds: ChannelCredentials,
   ): Promise<{ external_instance_id: string }> {
-    if (!creds.api_key || !creds.instance_url) {
-      throw new Error('UAZAPI adapter requer api_key e instance_url')
+    if (!creds.admin_token || !creds.instance_token || !creds.instance_url) {
+      throw new Error('UAZAPI adapter requer admin_token, instance_token e instance_url')
     }
 
     const instanceName = `prospeccao-${channel.id.slice(0, 8)}`
 
     const res = await fetch(`${this.base(creds)}/instance/init`, {
       method: 'POST',
-      headers: this.headers(creds),
+      headers: this.adminHeaders(creds),
       body: JSON.stringify({ name: instanceName }),
     })
 
@@ -68,10 +77,11 @@ export class UazapiAdapter implements IWhatsAppAdapter {
     const instanceId = channel.external_instance_id
     if (!instanceId) throw new Error('external_instance_id nao definido — chame createChannel primeiro')
 
-    const res = await fetch(
-      `${this.base(creds)}/instance/qrcode?id=${encodeURIComponent(instanceId)}`,
-      { headers: this.headers(creds) },
-    )
+    const res = await fetch(`${this.base(creds)}/instance/connect`, {
+      method: 'POST',
+      headers: this.instanceHeaders(creds),
+      body: JSON.stringify({ id: instanceId }),
+    })
 
     if (!res.ok) return { status: 'ERROR' }
 
@@ -92,10 +102,9 @@ export class UazapiAdapter implements IWhatsAppAdapter {
     const instanceId = channel.external_instance_id
     if (!instanceId) return 'DISCONNECTED'
 
-    const res = await fetch(
-      `${this.base(creds)}/instance/status?id=${encodeURIComponent(instanceId)}`,
-      { headers: this.headers(creds) },
-    )
+    const res = await fetch(`${this.base(creds)}/instance/status`, {
+      headers: this.instanceHeaders(creds),
+    })
 
     if (!res.ok) return 'ERROR'
 
@@ -116,9 +125,9 @@ export class UazapiAdapter implements IWhatsAppAdapter {
     const instanceId = channel.external_instance_id
     if (!instanceId) return
 
-    await fetch(`${this.base(creds)}/instance/logout`, {
+    await fetch(`${this.base(creds)}/instance/disconnect`, {
       method: 'POST',
-      headers: this.headers(creds),
+      headers: this.instanceHeaders(creds),
       body: JSON.stringify({ id: instanceId }),
     }).catch(() => {
       // Best-effort — channel might already be disconnected
@@ -136,7 +145,7 @@ export class UazapiAdapter implements IWhatsAppAdapter {
 
     const res = await fetch(`${this.base(creds)}/message/send`, {
       method: 'POST',
-      headers: this.headers(creds),
+      headers: this.instanceHeaders(creds),
       body: JSON.stringify({ id: instanceId, phone: to, message: text }),
     })
 
@@ -170,7 +179,7 @@ export class UazapiAdapter implements IWhatsAppAdapter {
     const base64 = mediaBuffer.toString('base64')
     const res = await fetch(`${this.base(creds)}/message/sendFile`, {
       method: 'POST',
-      headers: this.headers(creds),
+      headers: this.instanceHeaders(creds),
       body: JSON.stringify({
         id: instanceId,
         phone: to,
@@ -214,7 +223,7 @@ export class UazapiAdapter implements IWhatsAppAdapter {
     const base64 = stickerBuffer.toString('base64')
     const res = await fetch(`${this.base(creds)}/message/sendSticker`, {
       method: 'POST',
-      headers: this.headers(creds),
+      headers: this.instanceHeaders(creds),
       body: JSON.stringify({ id: instanceId, phone: to, base64, mimetype: 'image/webp' }),
     })
 
@@ -239,7 +248,7 @@ export class UazapiAdapter implements IWhatsAppAdapter {
 
     const res = await fetch(`${this.base(creds)}/message/sendReaction`, {
       method: 'POST',
-      headers: this.headers(creds),
+      headers: this.instanceHeaders(creds),
       body: JSON.stringify({ id: instanceId, phone: to, messageId: targetMessageId, reaction: emoji }),
     })
 
@@ -273,7 +282,7 @@ export class UazapiAdapter implements IWhatsAppAdapter {
 
     const res = await fetch(
       `${this.base(creds)}/message/downloadMedia?id=${encodeURIComponent(instanceId)}&messageId=${encodeURIComponent(mediaId)}`,
-      { headers: this.headers(creds) },
+      { headers: this.instanceHeaders(creds) },
     )
 
     if (!res.ok) throw new Error(`UAZAPI downloadMedia falhou (${res.status})`)

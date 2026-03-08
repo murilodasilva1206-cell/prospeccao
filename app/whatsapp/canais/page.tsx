@@ -195,6 +195,8 @@ export default function WhatsAppChannelsPage() {
   const [appSecret, setAppSecret] = useState("")
   const [instanceUrl, setInstanceUrl] = useState("")
   const [apiKey, setApiKey] = useState("")
+  const [adminToken, setAdminToken] = useState("")
+  const [instanceToken, setInstanceToken] = useState("")
 
   const [createdWebhookSecret, setCreatedWebhookSecret] = useState("")
   const [webhookDialogOpen, setWebhookDialogOpen] = useState(false)
@@ -244,6 +246,8 @@ export default function WhatsAppChannelsPage() {
     setAppSecret("")
     setInstanceUrl("")
     setApiKey("")
+    setAdminToken("")
+    setInstanceToken("")
   }
 
   async function handleCreateChannel() {
@@ -258,6 +262,12 @@ export default function WhatsAppChannelsPage() {
             access_token: accessToken.trim(),
             phone_number_id: phoneNumberId.trim(),
             app_secret: appSecret.trim(),
+          }
+        : provider === "UAZAPI"
+        ? {
+            instance_url: instanceUrl.trim(),
+            admin_token: adminToken.trim(),
+            instance_token: instanceToken.trim(),
           }
         : {
             instance_url: instanceUrl.trim(),
@@ -535,6 +545,39 @@ export default function WhatsAppChannelsPage() {
                       />
                     </div>
                   </div>
+                ) : provider === "UAZAPI" ? (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-zinc-700">
+                        Instance URL
+                      </label>
+                      <Input
+                        value={instanceUrl}
+                        onChange={(e) => setInstanceUrl(e.target.value)}
+                        placeholder="https://api.uazapi.com"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-zinc-700">
+                        Admin Token
+                      </label>
+                      <Input
+                        value={adminToken}
+                        onChange={(e) => setAdminToken(e.target.value)}
+                        placeholder="admin token (criar instancia)"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-zinc-700">
+                        Instance Token
+                      </label>
+                      <Input
+                        value={instanceToken}
+                        onChange={(e) => setInstanceToken(e.target.value)}
+                        placeholder="instance token (conectar/enviar)"
+                      />
+                    </div>
+                  </div>
                 ) : (
                   <div className="space-y-4">
                     <div className="space-y-2">
@@ -544,7 +587,7 @@ export default function WhatsAppChannelsPage() {
                       <Input
                         value={instanceUrl}
                         onChange={(e) => setInstanceUrl(e.target.value)}
-                        placeholder="https://api.provider.com"
+                        placeholder="https://api.evolution.com"
                       />
                     </div>
                     <div className="space-y-2">

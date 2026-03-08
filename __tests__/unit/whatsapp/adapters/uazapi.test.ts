@@ -29,7 +29,8 @@ function makeChannel(overrides: Partial<Channel> = {}): Channel {
 
 const creds: ChannelCredentials = {
   instance_url: BASE,
-  api_key: 'uaz-api-key',
+  admin_token: 'uaz-admin-token',
+  instance_token: 'uaz-instance-token',
 }
 
 const adapter = new UazapiAdapter()
@@ -68,7 +69,7 @@ describe('UazapiAdapter.createChannel', () => {
   })
 
   it('throws when creds are missing', async () => {
-    await expect(adapter.createChannel(makeChannel(), {})).rejects.toThrow('api_key')
+    await expect(adapter.createChannel(makeChannel(), {})).rejects.toThrow('admin_token')
   })
 })
 
@@ -78,7 +79,7 @@ describe('UazapiAdapter.createChannel', () => {
 describe('UazapiAdapter.startConnection', () => {
   it('returns PENDING_QR with qrcode field', async () => {
     server.use(
-      http.get(`${BASE}/instance/qrcode`, () =>
+      http.post(`${BASE}/instance/connect`, () =>
         HttpResponse.json({ qrcode: 'data:image/png;base64,QRQR' }),
       ),
     )
@@ -89,7 +90,7 @@ describe('UazapiAdapter.startConnection', () => {
 
   it('returns PENDING_QR with base64 field as fallback', async () => {
     server.use(
-      http.get(`${BASE}/instance/qrcode`, () =>
+      http.post(`${BASE}/instance/connect`, () =>
         HttpResponse.json({ base64: 'data:image/png;base64,B64B64' }),
       ),
     )
@@ -100,7 +101,7 @@ describe('UazapiAdapter.startConnection', () => {
 
   it('returns CONNECTING when no QR in response', async () => {
     server.use(
-      http.get(`${BASE}/instance/qrcode`, () =>
+      http.post(`${BASE}/instance/connect`, () =>
         HttpResponse.json({}),
       ),
     )
@@ -110,7 +111,7 @@ describe('UazapiAdapter.startConnection', () => {
 
   it('returns ERROR when API fails', async () => {
     server.use(
-      http.get(`${BASE}/instance/qrcode`, () =>
+      http.post(`${BASE}/instance/connect`, () =>
         HttpResponse.json({}, { status: 500 }),
       ),
     )
@@ -211,6 +212,55 @@ describe('UazapiAdapter.sendMessage', () => {
     await expect(
       adapter.sendMessage(makeChannel(), creds, '5511999990000', 'Ola!'),
     ).rejects.toThrow('400')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Header contract — createChannel must use admintoken, instance ops must use token
+// ---------------------------------------------------------------------------
+describe('UazapiAdapter header contract', () => {
+  it('createChannel sends admintoken header (not Authorization Bearer)', async () => {
+    let capturedHeaders: Record<string, string> = {}
+    server.use(
+      http.post(`${BASE}/instance/init`, ({ request }) => {
+        request.headers.forEach((val, key) => { capturedHeaders[key] = val })
+        return HttpResponse.json({ id: 'inst-hdr-001' })
+      }),
+    )
+    await adapter.createChannel(makeChannel(), creds)
+    expect(capturedHeaders['admintoken']).toBe('uaz-admin-token')
+    expect(capturedHeaders['authorization']).toBeUndefined()
+  })
+
+  it('startConnection sends token header (not Authorization Bearer)', async () => {
+    let capturedHeaders: Record<string, string> = {}
+    server.use(
+      http.post(`${BASE}/instance/connect`, ({ request }) => {
+        request.headers.forEach((val, key) => { capturedHeaders[key] = val })
+        return HttpResponse.json({ qrcode: 'data:image/png;base64,QR' })
+      }),
+    )
+    await adapter.startConnection(makeChannel(), creds)
+    expect(capturedHeaders['token']).toBe('uaz-instance-token')
+    expect(capturedHeaders['authorization']).toBeUndefined()
+  })
+
+  it('sendMessage sends token header', async () => {
+    let capturedHeaders: Record<string, string> = {}
+    server.use(
+      http.post(`${BASE}/message/send`, ({ request }) => {
+        request.headers.forEach((val, key) => { capturedHeaders[key] = val })
+        return HttpResponse.json({ id: 'msg-hdr-001' })
+      }),
+    )
+    await adapter.sendMessage(makeChannel(), creds, '5511999990000', 'Ola!')
+    expect(capturedHeaders['token']).toBe('uaz-instance-token')
+    expect(capturedHeaders['authorization']).toBeUndefined()
+  })
+
+  it('throws when only api_key is provided (old creds format)', async () => {
+    const oldCreds: ChannelCredentials = { instance_url: BASE, api_key: 'old-key' }
+    await expect(adapter.createChannel(makeChannel(), oldCreds)).rejects.toThrow('admin_token')
   })
 })
 
