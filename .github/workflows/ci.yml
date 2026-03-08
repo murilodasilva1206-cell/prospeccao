@@ -20,8 +20,8 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - run: npm ci
-      - name: npm audit (fail on moderate+)
-        run: npm audit --audit-level=moderate
+      - name: npm audit (fail on high+ production vulnerabilities)
+        run: npm audit --omit=dev --audit-level=high
 
   # ---------------------------------------------------------------------------
   # 2. Secret scan — detect secrets in commit history

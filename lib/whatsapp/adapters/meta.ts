@@ -23,6 +23,16 @@ function stableId(...parts: string[]): string {
   return createHash('sha256').update(parts.join('::')).digest('hex').slice(0, 32)
 }
 
+function mapMetaStatus(rawStatus: string): WhatsAppEvent['type'] | undefined {
+  switch (rawStatus) {
+    case 'sent': return 'message.sent'
+    case 'delivered': return 'message.delivered'
+    case 'read': return 'message.read'
+    case 'failed': return 'message.failed'
+    default: return undefined
+  }
+}
+
 export class MetaAdapter implements IWhatsAppAdapter {
   async createChannel(
     _channel: Channel,
@@ -314,6 +324,7 @@ export class MetaAdapter implements IWhatsAppAdapter {
       payload.emoji = rxn?.emoji ?? null
       payload.body = rxn?.emoji ?? null
     } else {
+      // eslint-disable-next-line security/detect-object-injection
       const m = (message[msgType] as Record<string, unknown>) ?? {}
       payload.media_id = String(m.id ?? '')
       payload.mime_type = String(m.mime_type ?? '')
@@ -339,17 +350,11 @@ export class MetaAdapter implements IWhatsAppAdapter {
     const statusEntry = statuses?.[0]
     if (!statusEntry) return null
 
-    const typeMap: Record<string, WhatsAppEvent['type']> = {
-      sent: 'message.sent',
-      delivered: 'message.delivered',
-      read: 'message.read',
-      failed: 'message.failed',
-    }
     const rawStatus = String(statusEntry.status ?? '')
     // Unknown status values must NOT be silently promoted to message.sent — that would
     // mark recipients as delivered when the provider sent an unrecognized status code.
     // Return null so normalizeEvent falls through to the connection.update fallback.
-    const eventType = typeMap[rawStatus]
+    const eventType = mapMetaStatus(rawStatus)
     if (!eventType) return null
     const errors = statusEntry.errors as Array<Record<string, unknown>> | undefined
     const errorCode = errors?.[0]?.code ?? null

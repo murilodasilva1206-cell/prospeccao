@@ -22,6 +22,18 @@ function stableId(...parts: string[]): string {
   return createHash('sha256').update(parts.join('::')).digest('hex').slice(0, 32)
 }
 
+function mapUazapiAck(ack: number): WhatsAppEvent['type'] {
+  switch (ack) {
+    case 3: return 'message.read'
+    case 2: return 'message.delivered'
+    case 1: return 'message.sent'
+    case -1:
+    case 0:
+      return 'message.failed'
+    default: return 'message.sent'
+  }
+}
+
 export class UazapiAdapter implements IWhatsAppAdapter {
   private base(creds: ChannelCredentials): string {
     if (!creds.instance_url) throw new Error('UAZAPI adapter requer instance_url')
@@ -380,14 +392,7 @@ export class UazapiAdapter implements IWhatsAppAdapter {
     const messageId = payload.messageId ?? ''
     // UAZAPI ack: -1=failed, 0=error, 1=sent, 2=delivered, 3=read
     const ack = payload.ack ?? 0
-    const typeMap: Record<number, WhatsAppEvent['type']> = {
-      [-1]: 'message.failed',
-      0: 'message.failed',
-      1: 'message.sent',
-      2: 'message.delivered',
-      3: 'message.read',
-    }
-    const eventType = typeMap[ack] ?? 'message.sent'
+    const eventType = mapUazapiAck(ack)
     const statusLabel = ack === 3 ? 'read' : ack === 2 ? 'delivered' : ack <= 0 ? 'failed' : 'sent'
     const errorReason = (payload as Record<string, unknown>).error as string | undefined ?? null
 

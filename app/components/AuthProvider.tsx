@@ -53,7 +53,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Load current session on mount
   useEffect(() => {
-    fetchSession().finally(() => setLoading(false))
+    let mounted = true
+    ;(async () => {
+      await fetchSession()
+      if (mounted) setLoading(false)
+    })()
+    return () => { mounted = false }
   }, [fetchSession])
 
   const refreshSession = useCallback(async () => {

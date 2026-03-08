@@ -110,15 +110,17 @@ export const EnvSchema = z.object({
 }).superRefine((data, ctx) => {
   // S3 credentials required when media storage is enabled
   if (data.MEDIA_STORAGE_ENABLED) {
-    const required: Array<keyof typeof data> = ['S3_BUCKET', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY', 'S3_REGION']
-    for (const key of required) {
-      if (!data[key]) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [key],
-          message: `${key} is required when MEDIA_STORAGE_ENABLED=true`,
-        })
-      }
+    const missing: string[] = []
+    if (!data.S3_BUCKET) missing.push('S3_BUCKET')
+    if (!data.S3_ACCESS_KEY_ID) missing.push('S3_ACCESS_KEY_ID')
+    if (!data.S3_SECRET_ACCESS_KEY) missing.push('S3_SECRET_ACCESS_KEY')
+    if (!data.S3_REGION) missing.push('S3_REGION')
+    for (const key of missing) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key],
+        message: `${key} is required when MEDIA_STORAGE_ENABLED=true`,
+      })
     }
   }
 

@@ -173,14 +173,13 @@ function firstName(name: string): string {
 function describeFromCnae(cnae: string | undefined): string | null {
   if (!cnae) return null
   // Very basic mapping for the most common CNAEs; expand as needed
-  const map: Record<string, string> = {
-    '8630': 'saúde',
-    '5611': 'alimentação',
-    '9313': 'academia',
-    '4771': 'farmácias',
-    '8599': 'educação',
-    '4330': 'construção',
+  switch (cnae.slice(0, 4)) {
+    case '8630': return 'saúde'
+    case '5611': return 'alimentação'
+    case '9313': return 'academia'
+    case '4771': return 'farmácias'
+    case '8599': return 'educação'
+    case '4330': return 'construção'
+    default: return null
   }
-  const prefix = cnae.slice(0, 4)
-  return map[prefix] ?? null
 }

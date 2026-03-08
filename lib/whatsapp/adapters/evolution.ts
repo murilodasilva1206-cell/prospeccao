@@ -22,6 +22,18 @@ function stableId(...parts: string[]): string {
   return createHash('sha256').update(parts.join('::')).digest('hex').slice(0, 32)
 }
 
+function mapEvolutionStatus(statusRaw: string): WhatsAppEvent['type'] | undefined {
+  switch (statusRaw) {
+    case 'SERVER_ACK': return 'message.sent'
+    case 'DELIVERY_ACK': return 'message.delivered'
+    case 'READ': return 'message.read'
+    case 'PLAYED': return 'message.read'
+    case 'ERROR': return 'message.failed'
+    case 'NACK': return 'message.failed'
+    default: return undefined
+  }
+}
+
 export class EvolutionAdapter implements IWhatsAppAdapter {
   private base(creds: ChannelCredentials): string {
     if (!creds.instance_url) throw new Error('Evolution adapter requer instance_url')
@@ -416,17 +428,8 @@ export class EvolutionAdapter implements IWhatsAppAdapter {
     const messageId = data.key?.id ?? ''
     const statusRaw = (data.update?.status ?? data.status ?? '').toUpperCase()
 
-    const typeMap: Record<string, WhatsAppEvent['type']> = {
-      SERVER_ACK: 'message.sent',
-      DELIVERY_ACK: 'message.delivered',
-      READ: 'message.read',
-      // Error/nack variants from Evolution
-      ERROR: 'message.failed',
-      NACK: 'message.failed',
-      PLAYED: 'message.read',
-    }
     // Unknown statuses are not silently mapped to message.sent to avoid false positives
-    const eventType = typeMap[statusRaw]
+    const eventType = mapEvolutionStatus(statusRaw)
     if (!eventType) return null
 
     const errorReason = (data.update as Record<string, unknown> | undefined)?.reason as string | undefined ?? null

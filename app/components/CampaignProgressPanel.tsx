@@ -78,14 +78,14 @@ async function apiPost(url: string, body?: unknown) {
 }
 
 function statusLabel(status: string) {
-  const map: Record<string, string> = {
-    sending: 'Enviando',
-    paused: 'Pausada',
-    completed: 'Concluida',
-    completed_with_errors: 'Concluida com erros',
-    cancelled: 'Cancelada',
+  switch (status) {
+    case 'sending': return 'Enviando'
+    case 'paused': return 'Pausada'
+    case 'completed': return 'Concluida'
+    case 'completed_with_errors': return 'Concluida com erros'
+    case 'cancelled': return 'Cancelada'
+    default: return status
   }
-  return map[status] ?? status
 }
 
 function statusColor(status: string) {

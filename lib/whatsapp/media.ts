@@ -40,13 +40,6 @@ export const ALLOWED_MIMES = new Set([
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ])
 
-const MAX_SIZE: Record<string, number> = {
-  image: 5 * 1024 * 1024,        // 5 MB
-  audio: 16 * 1024 * 1024,       // 16 MB
-  video: 16 * 1024 * 1024,       // 16 MB
-  document: 100 * 1024 * 1024,   // 100 MB
-  sticker: 512 * 1024,           // 512 KB
-}
 
 function getCategory(mime: string): string | null {
   if (mime.startsWith('image/')) return 'image'
@@ -99,32 +92,46 @@ function checkMagicBytes(buffer: Buffer, mime: string): boolean {
   }
   for (const sig of signatures) {
     const slice = buffer.slice(sig.offset, sig.offset + sig.bytes.length)
-    for (let i = 0; i < sig.bytes.length; i++) {
-      if (sig.bytes[i] !== -1 && slice[i] !== sig.bytes[i]) {
+    for (const [idx, expected] of sig.bytes.entries()) {
+      if (expected !== -1 && slice.at(idx) !== expected) {
         return false
       }
     }
   }
   return true
 }
-const MIME_TO_EXT: Record<string, string> = {
-  'image/jpeg': 'jpg',
-  'image/png': 'png',
-  'image/webp': 'webp',
-  'image/gif': 'gif',
-  'image/avif': 'avif',
-  'audio/ogg': 'ogg',
-  'audio/mpeg': 'mp3',
-  'audio/mp4': 'm4a',
-  'audio/wav': 'wav',
-  'audio/webm': 'webm',
-  'video/mp4': 'mp4',
-  'video/webm': 'webm',
-  'video/3gpp': '3gp',
-  'application/pdf': 'pdf',
-  'text/plain': 'txt',
-  'application/msword': 'doc',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+
+function getMaxBytes(category: string): number {
+  switch (category) {
+    case 'image': return 5 * 1024 * 1024
+    case 'audio': return 16 * 1024 * 1024
+    case 'video': return 16 * 1024 * 1024
+    case 'sticker': return 512 * 1024
+    default: return 100 * 1024 * 1024
+  }
+}
+
+function getExtForMime(mime: string): string {
+  switch (mime) {
+    case 'image/jpeg': return 'jpg'
+    case 'image/png': return 'png'
+    case 'image/webp': return 'webp'
+    case 'image/gif': return 'gif'
+    case 'image/avif': return 'avif'
+    case 'audio/ogg': return 'ogg'
+    case 'audio/mpeg': return 'mp3'
+    case 'audio/mp4': return 'm4a'
+    case 'audio/wav': return 'wav'
+    case 'audio/webm': return 'webm'
+    case 'video/mp4': return 'mp4'
+    case 'video/webm': return 'webm'
+    case 'video/3gpp': return '3gp'
+    case 'application/pdf': return 'pdf'
+    case 'text/plain': return 'txt'
+    case 'application/msword': return 'doc'
+    case 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': return 'docx'
+    default: return 'bin'
+  }
 }
 
 export interface ValidatedMedia {
@@ -162,7 +169,7 @@ export function validateMediaFile(buffer: Buffer, declaredMime: string): Validat
     throw new MediaValidationError(`Cannot determine category for MIME: ${mime}`)
   }
 
-  const maxBytes = MAX_SIZE[category] ?? MAX_SIZE['document']
+  const maxBytes = getMaxBytes(category)
   if (buffer.length > maxBytes) {
     const maxMB = (maxBytes / (1024 * 1024)).toFixed(0)
     throw new MediaValidationError(
@@ -176,7 +183,7 @@ export function validateMediaFile(buffer: Buffer, declaredMime: string): Validat
     )
   }
 
-  const ext = MIME_TO_EXT[mime] ?? 'bin'
+  const ext = getExtForMime(mime)
   return { mime, size: buffer.length, ext, category }
 }
 
