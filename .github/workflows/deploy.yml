@@ -46,9 +46,14 @@ jobs:
           DB_NAME: prospeccao
           DB_USER: app
           DB_PASSWORD: placeholder12345
+          DB_SSL: 'false'
+          ALLOW_INSECURE_DB: 'true'
           OPENROUTER_API_KEY: sk-or-placeholder-build-check-only
           OPENROUTER_MODEL: anthropic/claude-3.5-sonnet
           NODE_ENV: production
+          # 64-char hex — required by EnvSchema at build time
+          # Prefer the real secret; fall back to a dummy value for fork/PR builds
+          CREDENTIALS_ENCRYPTION_KEY: ${{ secrets.CREDENTIALS_ENCRYPTION_KEY || 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }}
 
   # ---------------------------------------------------------------------------
   # Deploy (add your hosting provider's action here)
