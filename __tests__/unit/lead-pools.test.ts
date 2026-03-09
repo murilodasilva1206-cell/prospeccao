@@ -423,6 +423,20 @@ describe('GET /api/lead-pools', () => {
       expect(body.error).toBe('Muitas requisicoes')
     })
   })
+
+  describe('internal server error', () => {
+    it('returns 500 when repo throws an unexpected error', async () => {
+      mockPoolConnect()
+      mockAuth(WS_TEST)
+      vi.mocked(findLeadPoolsByWorkspace).mockRejectedValue(new Error('DB connection lost'))
+
+      const req = makeListRequest()
+      const res = await listRoute(req)
+      expect(res.status).toBe(500)
+      const body = await res.json() as { error: string }
+      expect(body.error).toBe('Erro interno do servidor')
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------

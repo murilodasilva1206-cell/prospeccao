@@ -29,6 +29,7 @@ import {
   History,
   Trash2,
   RefreshCw,
+  ExternalLink,
 } from 'lucide-react'
 import CampaignWizard from './CampaignWizard'
 
@@ -210,7 +211,7 @@ export default function AgentChat() {
         const agentMsg: ChatMessage = {
           id: genId(),
           role: 'agent',
-          text: data.message ?? 'Nao foi possivel processar sua solicitacao.',
+          text: data.message ?? 'Não foi possível processar sua solicitação.',
         }
         setMessages((prev) => [...prev, agentMsg])
       }
@@ -220,7 +221,7 @@ export default function AgentChat() {
         {
           id: genId(),
           role: 'system',
-          text: 'Erro de conexao. Verifique sua internet e tente novamente.',
+          text: 'Erro de conexão. Verifique sua internet e tente novamente.',
         },
       ])
     } finally {
@@ -284,7 +285,7 @@ export default function AgentChat() {
           {
             id: genId(),
             role: 'system',
-            text: `Nao foi possivel criar a campanha: ${err instanceof Error ? err.message : 'Erro desconhecido'}`,
+            text: `Não foi possível criar a campanha: ${err instanceof Error ? err.message : 'Erro desconhecido'}`,
           },
         ])
       } finally {
@@ -324,7 +325,7 @@ export default function AgentChat() {
     } catch {
       setMessages((prev) => [
         ...prev,
-        { id: genId(), role: 'system', text: 'Nao foi possivel salvar a lista. Tente novamente.' },
+        { id: genId(), role: 'system', text: 'Não foi possível salvar a lista. Tente novamente.' },
       ])
     } finally {
       setSavingPoolIds((prev) => ({ ...prev, [msg.id]: false }))
@@ -430,7 +431,7 @@ export default function AgentChat() {
         {
           id: genId(),
           role: 'agent',
-          text: 'Campanha concluida! Veja os resultados no painel de progresso.',
+          text: 'Campanha concluída! Veja os resultados no painel de progresso.',
         },
       ])
     },
@@ -480,7 +481,7 @@ export default function AgentChat() {
               <div className="flex items-center gap-2">
                 <Bot className="size-5 text-white" />
                 <div>
-                  <p className="text-sm font-semibold text-white">Agente de Prospeccao</p>
+                  <p className="text-sm font-semibold text-white">Agente de Prospecção</p>
                   <p className="text-xs text-emerald-200">Busca empresas no CNPJ</p>
                 </div>
               </div>
@@ -524,14 +525,24 @@ export default function AgentChat() {
                 <p className="text-xs font-medium text-zinc-500">
                   {poolsTotal > 0 ? `${poolsTotal} lista${poolsTotal > 1 ? 's' : ''} salva${poolsTotal > 1 ? 's' : ''}` : 'Listas salvas'}
                 </p>
-                <button
-                  onClick={() => void fetchPools()}
-                  disabled={poolsLoading}
-                  title="Atualizar"
-                  className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 disabled:opacity-40"
-                >
-                  <RefreshCw className={`size-3.5 ${poolsLoading ? 'animate-spin' : ''}`} />
-                </button>
+                <div className="flex items-center gap-1">
+                  <a
+                    href="/whatsapp/listas"
+                    title="Abrir página de listas"
+                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50"
+                  >
+                    <ExternalLink className="size-3" />
+                    Ver todas
+                  </a>
+                  <button
+                    onClick={() => void fetchPools()}
+                    disabled={poolsLoading}
+                    title="Atualizar"
+                    className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 disabled:opacity-40"
+                  >
+                    <RefreshCw className={`size-3.5 ${poolsLoading ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
               </div>
 
               {poolsError && (
@@ -605,7 +616,7 @@ export default function AgentChat() {
             {messages.length === 0 && (
               <div className="py-8 text-center text-sm text-zinc-400">
                 <MessageSquare className="mx-auto mb-2 size-8 opacity-30" />
-                <p>Experimente: <span className="italic">&quot;Clinicas em Sao Paulo com telefone&quot;</span></p>
+                <p>Experimente: <span className="italic">&quot;Clínicas em São Paulo com telefone&quot;</span></p>
               </div>
             )}
 
@@ -732,7 +743,7 @@ export default function AgentChat() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Ex: 10 saloes em Manaus com telefone..."
+                placeholder="Ex: 10 salões em Manaus com telefone..."
                 rows={2}
                 maxLength={1000}
                 className="flex-1 resize-none rounded-xl border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400"

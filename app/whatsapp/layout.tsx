@@ -12,13 +12,14 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuth } from '@/app/components/AuthProvider'
 import AgentChat from '@/app/components/AgentChat'
-import { LogOut, MessageSquare, Plug, Key, Bot, Loader2 } from 'lucide-react'
+import { LogOut, MessageSquare, Plug, Key, Bot, List, Loader2 } from 'lucide-react'
 
 const NAV_LINKS = [
-  { href: '/whatsapp/inbox', label: 'Inbox', icon: MessageSquare },
-  { href: '/whatsapp/canais', label: 'Canais', icon: Plug },
-  { href: '/whatsapp/chaves', label: 'Chaves', icon: Key },
-  { href: '/whatsapp/llm', label: 'Integrações IA', icon: Bot },
+  { href: '/whatsapp/inbox',  label: 'Inbox',          icon: MessageSquare },
+  { href: '/whatsapp/canais', label: 'Canais',          icon: Plug },
+  { href: '/whatsapp/chaves', label: 'Chaves',          icon: Key },
+  { href: '/whatsapp/listas', label: 'Listas',          icon: List },
+  { href: '/whatsapp/llm',    label: 'Integrações IA',  icon: Bot },
 ]
 
 export default function WhatsAppLayout({ children }: { children: React.ReactNode }) {
@@ -52,9 +53,9 @@ export default function WhatsAppLayout({ children }: { children: React.ReactNode
     <div className="min-h-screen bg-slate-50">
       {/* Global top bar */}
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white shadow-sm">
-        <div className="flex h-12 items-center gap-6 px-4">
+        <div className="mx-auto flex h-12 w-full max-w-6xl items-center gap-6 px-4">
           {/* Brand */}
-          <span className="text-sm font-semibold text-slate-800">Prospeccao</span>
+          <span className="text-sm font-semibold text-slate-800">Prospecção</span>
 
           {/* Nav links */}
           <nav className="flex items-center gap-1">
