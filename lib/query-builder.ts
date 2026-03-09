@@ -122,13 +122,12 @@ export function buildContactsQuery(filters: ExtendedBuscaQuery): QueryResult {
     conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
   // orderBy is z.enum() validated — safe to interpolate.
-  // 'contato_priority' uses a CASE expression (not a column name) so it never
-  // reaches the database as an arbitrary identifier.
+  // 'contato_priority' maps to boolean column sort (DESC) — index-friendly.
   // cnpj_completo (PK, unique) is appended as a stable tiebreaker on every ordering
   // so OFFSET-based pagination is deterministic even when primary sort keys tie.
   const orderExpression =
     filters.orderBy === 'contato_priority'
-      ? `(CASE WHEN tem_telefone THEN 0 ELSE 1 END) ASC, (CASE WHEN tem_email THEN 0 ELSE 1 END) ASC, razao_social ${filters.orderDir}, cnpj_completo ASC`
+      ? `tem_telefone DESC, tem_email DESC, razao_social ${filters.orderDir}, cnpj_completo ASC`
       : `${filters.orderBy} ${filters.orderDir}, cnpj_completo ASC`
   const orderClause = `ORDER BY ${orderExpression}`
 

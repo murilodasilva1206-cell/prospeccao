@@ -142,13 +142,42 @@ describe('buildContactsQuery', () => {
     })
     expect(textGeneric).toMatch(/municipio desc,\s*cnpj_completo ASC/i)
 
-    // contato_priority CASE expression — tiebreaker must also be present
+    // contato_priority — tiebreaker must also be present
     const { text: textPriority } = buildContactsQuery({
       ...baseFilters,
       orderBy: 'contato_priority',
       orderDir: 'asc',
     })
     expect(textPriority).toMatch(/cnpj_completo ASC/i)
+  })
+
+  it('contato_priority ORDER BY uses boolean DESC columns — not CASE WHEN', () => {
+    const { text } = buildContactsQuery({
+      ...baseFilters,
+      orderBy: 'contato_priority',
+      orderDir: 'asc',
+    })
+    // Index-friendly form
+    expect(text).toMatch(/tem_telefone\s+DESC/i)
+    expect(text).toMatch(/tem_email\s+DESC/i)
+    // Old CASE WHEN form must not appear
+    expect(text).not.toMatch(/CASE\s+WHEN/i)
+  })
+
+  it('contato_priority ORDER BY preserves razao_social as secondary sort with requested direction', () => {
+    const { text: asc } = buildContactsQuery({
+      ...baseFilters,
+      orderBy: 'contato_priority',
+      orderDir: 'asc',
+    })
+    expect(asc).toMatch(/razao_social\s+asc/i)
+
+    const { text: desc } = buildContactsQuery({
+      ...baseFilters,
+      orderBy: 'contato_priority',
+      orderDir: 'desc',
+    })
+    expect(desc).toMatch(/razao_social\s+desc/i)
   })
 
   it('does not allow arbitrary strings in ORDER BY (schema prevents this)', () => {

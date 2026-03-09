@@ -195,6 +195,21 @@ export async function POST(request: NextRequest) {
     })
   }
 
+  // Guard: require at least one location filter OR one sector filter before
+  // hitting the DB. Without either, the query would scan the full table
+  // (50 M+ rows) and likely time out. Return a clarify response instead so the
+  // AI can prompt the user for a more targeted query.
+  const hasLocation = Boolean(rawFilters.municipio || rawFilters.uf)
+  const hasSector   = Boolean(cnaeCodesFromNicho?.length || rawFilters.cnae_principal || rawFilters.nicho)
+  if (!hasLocation && !hasSector) {
+    log.info({ filters: rawFilters }, 'Busca muito ampla — sem localizacao ou setor')
+    return NextResponse.json({
+      action: 'clarify',
+      message: 'Para buscar com precisão, informe ao menos cidade/UF ou nicho (ex: "clínicas de estética em Manaus/AM").',
+      metadata: { latencyMs, parseSuccess, confidence: intent.confidence },
+    })
+  }
+
   // Regex fallback: extract a requested quantity from the user message when the
   // AI did not populate `filters.limit`.  Matches patterns like:
   //   "100 clínicas", "me traga 50 leads", "preciso de 30 empresas", "buscar 200"

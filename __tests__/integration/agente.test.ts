@@ -167,6 +167,52 @@ describe('POST /api/agente', () => {
     expect([429, 503]).toContain(res.status)
   })
 
+  it('broad query (no location, no sector) returns clarify — no 500', async (ctx) => {
+    if (!dbAvailable) ctx.skip()
+    // Mock AI to return intent with no location and no sector filter
+    server.use(
+      http.post('https://openrouter.ai/api/v1/chat/completions', () =>
+        HttpResponse.json({
+          choices: [{ message: { content: JSON.stringify({
+            action: 'search',
+            filters: { limit: 10 },
+            confidence: 0.5,
+          }) } }],
+        }),
+      ),
+    )
+
+    const req = makeRequest({ message: 'me dá empresas' })
+    const res = await POST(req)
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.action).toBe('clarify')
+  })
+
+  it('"mais 5" without context returns clarify — not 500', async (ctx) => {
+    if (!dbAvailable) ctx.skip()
+    // Simulate AI returning only limit/orderBy (no location or sector)
+    server.use(
+      http.post('https://openrouter.ai/api/v1/chat/completions', () =>
+        HttpResponse.json({
+          choices: [{ message: { content: JSON.stringify({
+            action: 'search',
+            filters: { limit: 5, orderBy: 'razao_social', orderDir: 'asc' },
+            confidence: 0.4,
+          }) } }],
+        }),
+      ),
+    )
+
+    const req = makeRequest({ message: 'mais 5' }, '10.0.0.2')
+    const res = await POST(req)
+    const body = await res.json()
+
+    expect(res.status).toBe(200)        // must NOT be 500
+    expect(body.action).toBe('clarify')
+  })
+
   it('handles OpenRouter returning invalid JSON gracefully (fallback)', async (ctx) => {
     // route.ts calls pool.connect() before requireWorkspaceAuth, so DB must be reachable
     if (!dbAvailable) ctx.skip()

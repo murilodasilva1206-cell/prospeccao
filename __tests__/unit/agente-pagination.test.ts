@@ -305,3 +305,129 @@ describe('/api/agente — auto-save lead pool', () => {
     expect(body.pool_id).toBeNull()
   })
 })
+
+// ---------------------------------------------------------------------------
+// Broad-query guard — minimum filter combinations
+// ---------------------------------------------------------------------------
+
+/** Build a POST /api/agente request */
+function makeReq(message: string) {
+  return new NextRequest('http://localhost/api/agente', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ message }),
+  })
+}
+
+/** Mock AI to return a search intent with the given filters */
+function mockIntent(filters: Record<string, unknown>) {
+  mockCallAiAgent.mockResolvedValue({
+    intent:       { action: 'search', filters: { limit: 5, ...filters }, confidence: 0.9 },
+    latencyMs:    5,
+    parseSuccess: true,
+  })
+}
+
+/** Set up mockClientQuery with one count row + one result row so searches complete */
+function setupOneResult(cnpj = '001') {
+  mockGetServedCnpjs.mockResolvedValue(new Set())
+  mockClientQuery
+    .mockResolvedValueOnce({ rows: [{ total: '1' }] })
+    .mockResolvedValueOnce({ rows: [makeRow(cnpj)] })
+}
+
+describe('/api/agente — broad-query guard (filter combinations)', () => {
+  // ── BLOCKED: no location AND no sector ──────────────────────────────────
+
+  it('blocks: no filters → clarify, DB not touched', async () => {
+    mockIntent({ limit: 10 })
+
+    const res = await POST(makeReq('me dá empresas'))
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.action).toBe('clarify')
+    expect(mockClientQuery).not.toHaveBeenCalled()
+  })
+
+  it('blocks: situacao_cadastral only (not a location or sector) → clarify', async () => {
+    mockIntent({ situacao_cadastral: '02' })
+
+    const res = await POST(makeReq('empresas ativas'))
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.action).toBe('clarify')
+    expect(mockClientQuery).not.toHaveBeenCalled()
+  })
+
+  it('blocks: tem_telefone only → clarify', async () => {
+    mockIntent({ tem_telefone: true })
+
+    const res = await POST(makeReq('empresas com telefone'))
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.action).toBe('clarify')
+    expect(mockClientQuery).not.toHaveBeenCalled()
+  })
+
+  it('blocks: limit + orderBy only (simulates ambiguous follow-up like "mais 5") → clarify, no 500', async () => {
+    mockIntent({ limit: 5, orderBy: 'razao_social', orderDir: 'asc' })
+
+    const res = await POST(makeReq('me dá mais 5'))
+    const body = await res.json()
+
+    expect(res.status).toBe(200)          // must NOT be 500
+    expect(body.action).toBe('clarify')
+    expect(mockClientQuery).not.toHaveBeenCalled()
+  })
+
+  // ── ALLOWED: location present ────────────────────────────────────────────
+
+  it('allows: uf only → search', async () => {
+    mockIntent({ uf: 'AM' })
+    setupOneResult('101')
+
+    const res = await POST(makeReq('empresas no AM'))
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.action).toBe('search')
+  })
+
+  it('allows: uf + situacao_cadastral (location present, no sector) → search', async () => {
+    mockIntent({ uf: 'SP', situacao_cadastral: '02' })
+    setupOneResult('102')
+
+    const res = await POST(makeReq('ativas em SP'))
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.action).toBe('search')
+  })
+
+  // ── ALLOWED: sector present ──────────────────────────────────────────────
+
+  it('allows: cnae_principal only → search', async () => {
+    mockIntent({ cnae_principal: '8630-5/04' })
+    setupOneResult('201')
+
+    const res = await POST(makeReq('clínicas'))
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.action).toBe('search')
+  })
+
+  it('allows: uf + cnae_principal → search', async () => {
+    mockIntent({ uf: 'SP', cnae_principal: '8630-5/04' })
+    setupOneResult('202')
+
+    const res = await POST(makeReq('clínicas em SP'))
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.action).toBe('search')
+  })
+})
