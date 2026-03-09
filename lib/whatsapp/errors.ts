@@ -14,3 +14,19 @@ export class RetryableError extends Error {
     this.name = 'RetryableError'
   }
 }
+
+/**
+ * Thrown by validateCredentials when provider rejects supplied credentials.
+ * `userMessage` is safe to return to the API caller (no secrets).
+ * `httpStatus` is the provider's HTTP status code (null for network errors).
+ */
+export class CredentialValidationError extends Error {
+  constructor(
+    public readonly userMessage: string,
+    public readonly httpStatus: number | null,
+    detail: string,
+  ) {
+    super(`${userMessage}: ${detail}`)
+    this.name = 'CredentialValidationError'
+  }
+}

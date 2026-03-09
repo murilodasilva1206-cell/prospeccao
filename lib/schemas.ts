@@ -140,6 +140,54 @@ const UazapiCredentialsSchema = z.object({
   instance_token: SafeString(200), // Required: instance token — used for connect/status/send
 })
 
+// ---------------------------------------------------------------------------
+// ChannelUpdateSchema — PATCH /api/whatsapp/channels/:id
+//
+// provider must be sent by the client (to select which cred schema applies)
+// and must match the existing channel's provider (verified in the route).
+//
+// Credential sub-objects use .partial() so individual fields can be omitted
+// (blank = keep existing). The route merges with decrypted existing creds
+// and validates the merged result against the full provider schema.
+// ---------------------------------------------------------------------------
+
+export const ChannelUpdateSchema = z.discriminatedUnion('provider', [
+  z.object({
+    provider:     z.literal('META_CLOUD'),
+    name:         SafeString(100).optional(),
+    phone_number: z.string().regex(/^\+?\d{8,15}$/).nullable().optional(),
+    credentials:  MetaCredentialsSchema.partial().optional(),
+    revalidate:   z.boolean().optional(),
+  }),
+  z.object({
+    provider:     z.literal('EVOLUTION'),
+    name:         SafeString(100).optional(),
+    phone_number: z.string().regex(/^\+?\d{8,15}$/).nullable().optional(),
+    credentials:  EvolutionCredentialsSchema.partial().optional(),
+    revalidate:   z.boolean().optional(),
+  }),
+  z.object({
+    provider:     z.literal('UAZAPI'),
+    name:         SafeString(100).optional(),
+    phone_number: z.string().regex(/^\+?\d{8,15}$/).nullable().optional(),
+    credentials:  UazapiCredentialsSchema.partial().optional(),
+    revalidate:   z.boolean().optional(),
+  }),
+])
+export type ChannelUpdate = z.infer<typeof ChannelUpdateSchema>
+
+/**
+ * Returns the full (non-partial) credentials schema for a provider.
+ * Used after credential merging to validate the merged object has all required fields.
+ */
+export function getFullCredsSchema(provider: WhatsAppProvider) {
+  switch (provider) {
+    case 'META_CLOUD': return MetaCredentialsSchema
+    case 'EVOLUTION':  return EvolutionCredentialsSchema
+    case 'UAZAPI':     return UazapiCredentialsSchema
+  }
+}
+
 export const ChannelCreateSchema = z.discriminatedUnion('provider', [
   z.object({
     provider:     z.literal('META_CLOUD'),

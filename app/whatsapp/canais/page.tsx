@@ -5,6 +5,7 @@ import { motion } from "motion/react"
 import {
   Loader2,
   Link2,
+  Pencil,
   PlugZap,
   QrCode,
   RefreshCcw,
@@ -210,6 +211,20 @@ export default function WhatsAppChannelsPage() {
   const [sendTo, setSendTo] = useState("")
   const [sendMessage, setSendMessage] = useState("")
 
+  // Edit channel modal
+  const [editChannel, setEditChannel] = useState<Channel | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [editName, setEditName] = useState("")
+  const [editPhoneNumber, setEditPhoneNumber] = useState("")
+  // Credential fields — all start blank; blank = keep existing on the server
+  const [editInstanceUrl, setEditInstanceUrl] = useState("")
+  const [editAccessToken, setEditAccessToken] = useState("")
+  const [editPhoneNumberId, setEditPhoneNumberId] = useState("")
+  const [editAdminToken, setEditAdminToken] = useState("")
+  const [editInstanceToken, setEditInstanceToken] = useState("")
+  const [editApiKey, setEditApiKey] = useState("")
+  const [editAppSecret, setEditAppSecret] = useState("")
+
   const selectedProvider = useMemo(
     () => PROVIDERS.find((item) => item.value === provider),
     [provider]
@@ -392,6 +407,69 @@ export default function WhatsAppChannelsPage() {
     } finally {
       setBusyChannelId(null)
       setBusyAction(null)
+    }
+  }
+
+  function openEditDialog(channel: Channel) {
+    setEditChannel(channel)
+    setEditName(channel.name)
+    setEditPhoneNumber(channel.phone_number ?? "")
+    // Credential fields start blank — placeholder guides user
+    setEditInstanceUrl("")
+    setEditAccessToken("")
+    setEditPhoneNumberId("")
+    setEditAdminToken("")
+    setEditInstanceToken("")
+    setEditApiKey("")
+    setEditAppSecret("")
+  }
+
+  async function handleEditChannel() {
+    if (!editChannel) return
+    if (!editName.trim()) {
+      toast.warning("Nome do canal e obrigatorio")
+      return
+    }
+
+    // Build partial credentials — only include non-empty fields
+    const rawCreds: Record<string, string> = {}
+    if (editChannel.provider === "META_CLOUD") {
+      if (editAccessToken.trim()) rawCreds.access_token = editAccessToken.trim()
+      if (editPhoneNumberId.trim()) rawCreds.phone_number_id = editPhoneNumberId.trim()
+      if (editAppSecret.trim()) rawCreds.app_secret = editAppSecret.trim()
+    } else if (editChannel.provider === "UAZAPI") {
+      if (editInstanceUrl.trim()) rawCreds.instance_url = editInstanceUrl.trim()
+      if (editAdminToken.trim()) rawCreds.admin_token = editAdminToken.trim()
+      if (editInstanceToken.trim()) rawCreds.instance_token = editInstanceToken.trim()
+    } else {
+      if (editInstanceUrl.trim()) rawCreds.instance_url = editInstanceUrl.trim()
+      if (editApiKey.trim()) rawCreds.api_key = editApiKey.trim()
+    }
+
+    const payload: Record<string, unknown> = { provider: editChannel.provider }
+    if (editName.trim() !== editChannel.name) payload.name = editName.trim()
+    const newPhone = editPhoneNumber.trim() || null
+    if (newPhone !== editChannel.phone_number) payload.phone_number = newPhone
+    if (Object.keys(rawCreds).length > 0) payload.credentials = rawCreds
+
+    setSaving(true)
+    try {
+      const res = await fetch(`/api/whatsapp/channels/${editChannel.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      const data = (await res.json().catch(() => ({}))) as { error?: string }
+      if (!res.ok) {
+        throw new Error(data.error ?? `HTTP ${res.status}`)
+      }
+      setEditChannel(null)
+      await loadChannels()
+      toast.success("Canal atualizado com sucesso")
+    } catch (err) {
+      toast.error(readErrorMessage(err))
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -747,6 +825,15 @@ export default function WhatsAppChannelsPage() {
                                   <Unplug className="size-4" />
                                 )}
                               </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={active}
+                                onClick={() => openEditDialog(channel)}
+                                title="Editar canal"
+                              >
+                                <Pencil className="size-4" />
+                              </Button>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -831,6 +918,128 @@ export default function WhatsAppChannelsPage() {
               onClick={() => void handleSendTestMessage()}
             >
               Enviar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit channel dialog */}
+      <Dialog open={!!editChannel} onOpenChange={(open) => { if (!open) setEditChannel(null) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Editar canal</DialogTitle>
+            <DialogDescription>
+              Deixe os campos de credencial em branco para manter os valores atuais.
+            </DialogDescription>
+          </DialogHeader>
+          {editChannel && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-zinc-700">Nome do canal</label>
+                <Input
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder="Nome do canal"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-zinc-700">Numero (opcional)</label>
+                <Input
+                  value={editPhoneNumber}
+                  onChange={(e) => setEditPhoneNumber(e.target.value)}
+                  placeholder="+5511999990000"
+                />
+              </div>
+              <Separator />
+              <p className="text-xs text-zinc-500">
+                Provider: <span className="font-medium text-zinc-800">{providerLabel(editChannel.provider)}</span>
+              </p>
+              {editChannel.provider === "META_CLOUD" ? (
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-zinc-700">Access Token</label>
+                    <Input
+                      value={editAccessToken}
+                      onChange={(e) => setEditAccessToken(e.target.value)}
+                      placeholder="preencha para alterar"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-zinc-700">Phone Number ID</label>
+                    <Input
+                      value={editPhoneNumberId}
+                      onChange={(e) => setEditPhoneNumberId(e.target.value)}
+                      placeholder="preencha para alterar"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-zinc-700">App Secret</label>
+                    <Input
+                      value={editAppSecret}
+                      onChange={(e) => setEditAppSecret(e.target.value)}
+                      placeholder="preencha para alterar"
+                    />
+                  </div>
+                </div>
+              ) : editChannel.provider === "UAZAPI" ? (
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-zinc-700">Instance URL</label>
+                    <Input
+                      value={editInstanceUrl}
+                      onChange={(e) => setEditInstanceUrl(e.target.value)}
+                      placeholder="preencha para alterar"
+                    />
+                    <p className="text-xs text-zinc-500">
+                      Use exatamente a URL do ambiente onde o token foi emitido (free vs api).
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-zinc-700">Admin Token</label>
+                    <Input
+                      value={editAdminToken}
+                      onChange={(e) => setEditAdminToken(e.target.value)}
+                      placeholder="preencha para alterar"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-zinc-700">Instance Token</label>
+                    <Input
+                      value={editInstanceToken}
+                      onChange={(e) => setEditInstanceToken(e.target.value)}
+                      placeholder="preencha para alterar"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-zinc-700">Instance URL</label>
+                    <Input
+                      value={editInstanceUrl}
+                      onChange={(e) => setEditInstanceUrl(e.target.value)}
+                      placeholder="preencha para alterar"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-zinc-700">API Key</label>
+                    <Input
+                      value={editApiKey}
+                      onChange={(e) => setEditApiKey(e.target.value)}
+                      placeholder="preencha para alterar"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditChannel(null)}>
+              Cancelar
+            </Button>
+            <Button onClick={() => void handleEditChannel()} disabled={saving}>
+              {saving ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+              Salvar
             </Button>
           </DialogFooter>
         </DialogContent>

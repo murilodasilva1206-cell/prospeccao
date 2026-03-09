@@ -14,7 +14,7 @@
 
 import { createHash } from 'crypto'
 import { safeCompare } from '../crypto'
-import { RetryableError } from '../errors'
+import { RetryableError, CredentialValidationError } from '../errors'
 import type { IWhatsAppAdapter, ConnectResult, SendResult, DownloadResult } from './interface'
 import type { Channel, ChannelCredentials, ChannelStatus, WhatsAppEvent } from '../types'
 
@@ -78,6 +78,20 @@ export class EvolutionAdapter implements IWhatsAppAdapter {
     const data = (await res.json()) as { instance?: { instanceName?: string } }
     const name = data.instance?.instanceName ?? instanceName
     return { external_instance_id: name }
+  }
+
+  async validateCredentials(channel: Channel, creds: ChannelCredentials): Promise<void> {
+    if (!creds.api_key || !creds.instance_url)
+      throw new Error('Evolution adapter requer api_key e instance_url')
+    const url = channel.external_instance_id
+      ? `${this.base(creds)}/instance/connectionState/${channel.external_instance_id}`
+      : `${this.base(creds)}/instance/fetchInstances`
+    const res = await fetch(url, { headers: this.headers(creds) })
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      const userMessage = res.status >= 500 ? 'Evolution API inacessível' : 'Credenciais Evolution inválidas'
+      throw new CredentialValidationError(userMessage, res.status, body)
+    }
   }
 
   async startConnection(

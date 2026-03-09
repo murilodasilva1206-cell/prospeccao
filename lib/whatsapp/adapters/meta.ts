@@ -12,7 +12,7 @@
 
 import { createHash, createHmac } from 'crypto'
 import { safeCompare } from '../crypto'
-import { RetryableError } from '../errors'
+import { RetryableError, CredentialValidationError } from '../errors'
 import type { IWhatsAppAdapter, ConnectResult, SendResult, DownloadResult } from './interface'
 import type { Channel, ChannelCredentials, ChannelStatus, WhatsAppEvent } from '../types'
 
@@ -51,6 +51,20 @@ export class MetaAdapter implements IWhatsAppAdapter {
     const data = (await res.json()) as { id?: string; display_phone_number?: string }
     if (!data.id) throw new Error('Meta Graph API nao retornou ID para o phone_number_id informado')
     return { external_instance_id: data.id }
+  }
+
+  async validateCredentials(_channel: Channel, creds: ChannelCredentials): Promise<void> {
+    if (!creds.access_token || !creds.phone_number_id)
+      throw new Error('Meta adapter requer access_token e phone_number_id')
+    const res = await fetch(
+      `${GRAPH_BASE}/${creds.phone_number_id}?fields=id`,
+      { headers: { Authorization: `Bearer ${creds.access_token}` } },
+    )
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      const userMessage = res.status >= 500 ? 'Meta API inacessível' : 'Credenciais Meta inválidas'
+      throw new CredentialValidationError(userMessage, res.status, body)
+    }
   }
 
   async startConnection(

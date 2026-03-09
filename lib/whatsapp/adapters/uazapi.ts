@@ -14,7 +14,7 @@
 
 import { createHash } from 'crypto'
 import { safeCompare } from '../crypto'
-import { RetryableError } from '../errors'
+import { RetryableError, CredentialValidationError } from '../errors'
 import type { IWhatsAppAdapter, ConnectResult, SendResult, DownloadResult } from './interface'
 import type { Channel, ChannelCredentials, ChannelStatus, WhatsAppEvent } from '../types'
 
@@ -80,6 +80,49 @@ export class UazapiAdapter implements IWhatsAppAdapter {
     const data = (await res.json()) as { name?: string; id?: string }
     const id = data.id ?? data.name ?? instanceName
     return { external_instance_id: id }
+  }
+
+  async validateCredentials(_channel: Channel, creds: ChannelCredentials): Promise<void> {
+    if (!creds.instance_url || !creds.instance_token)
+      throw new Error('UAZAPI adapter requer instance_url e instance_token')
+
+    // GET /instance/status validates the instance_token (same endpoint as getConnectionStatus).
+    // admin_token is only required for createChannel (POST /instance/init) — not validated here.
+    const res = await fetch(`${this.base(creds)}/instance/status`, {
+      headers: this.instanceHeaders(creds),
+    })
+
+    if (res.status === 401 || res.status === 403) {
+      const body = await res.text().catch(() => '')
+      throw new CredentialValidationError('Token de instância inválido', res.status, body)
+    }
+
+    if (res.status === 404) {
+      const body = await res.text().catch(() => '')
+      throw new CredentialValidationError(
+        'Instance URL/rota inválida para este ambiente',
+        res.status,
+        body,
+      )
+    }
+
+    if (res.status >= 500) {
+      const body = await res.text().catch(() => '')
+      throw new CredentialValidationError(
+        'Provider UAZAPI indisponível no momento',
+        res.status,
+        body,
+      )
+    }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      throw new CredentialValidationError(
+        'Credenciais inválidas ou provider inacessível',
+        res.status,
+        body,
+      )
+    }
   }
 
   async startConnection(

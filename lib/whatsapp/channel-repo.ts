@@ -104,6 +104,51 @@ export async function updateChannelStatus(
   return rows.length > 0 ? rowToChannel(rows[0]) : null
 }
 
+interface UpdateChannelConfigInput {
+  name?: string
+  phone_number?: string | null
+  credentials_encrypted?: string
+  external_instance_id?: string | null
+}
+
+export async function updateChannelConfig(
+  client: PoolClient,
+  id: string,
+  updates: UpdateChannelConfigInput,
+): Promise<Channel | null> {
+  const sets: string[] = []
+  const values: unknown[] = [id] // $1 = id (always in WHERE clause)
+
+  if (updates.name !== undefined) {
+    values.push(updates.name)
+    sets.push(`name = $${values.length}`)
+  }
+  if ('phone_number' in updates) {
+    values.push(updates.phone_number ?? null)
+    sets.push(`phone_number = $${values.length}`)
+  }
+  if (updates.credentials_encrypted !== undefined) {
+    values.push(updates.credentials_encrypted)
+    sets.push(`credentials_encrypted = $${values.length}`)
+  }
+  if ('external_instance_id' in updates) {
+    values.push(updates.external_instance_id ?? null)
+    sets.push(`external_instance_id = $${values.length}`)
+  }
+
+  if (sets.length === 0) {
+    // Nothing to update — return the current row unchanged
+    return findChannelById(client, id)
+  }
+
+  const { rows } = await client.query(
+    // eslint-disable-next-line security/detect-object-injection
+    `UPDATE whatsapp_channels SET ${sets.join(', ')} WHERE id = $1 RETURNING *`,
+    values,
+  )
+  return rows.length > 0 ? rowToChannel(rows[0]) : null
+}
+
 export async function deleteChannel(
   client: PoolClient,
   id: string,

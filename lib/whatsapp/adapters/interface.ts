@@ -139,4 +139,14 @@ export interface IWhatsAppAdapter {
   normalizeEvent(
     rawPayload: unknown,
   ): Omit<WhatsAppEvent, 'channel_id' | 'provider'>
+
+  /**
+   * Validates credentials against the provider WITHOUT side effects (read-only).
+   * Throws with a descriptive message on failure; returns void on success.
+   * Optional — if absent, the PATCH route skips provider-side revalidation.
+   */
+  validateCredentials?(
+    channel: Channel,
+    creds: ChannelCredentials,
+  ): Promise<void>
 }
