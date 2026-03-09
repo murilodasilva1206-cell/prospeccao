@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import Image from 'next/image'
 import { StatusTick } from './StatusTick'
 
 export interface MessageData {
@@ -43,11 +44,12 @@ function MediaContent({ message }: { message: MessageData }) {
   if (message.message_type === 'image' || message.message_type === 'sticker') {
     if (!signedUrl) return <div className="w-48 h-32 bg-gray-200 animate-pulse rounded" />
     return (
-      <img
+      <Image
         src={signedUrl}
         alt={message.media_filename ?? 'imagem'}
+        width={320}
+        height={256}
         className="max-w-xs max-h-64 rounded object-contain"
-        loading="lazy"
       />
     )
   }

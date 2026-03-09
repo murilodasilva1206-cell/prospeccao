@@ -252,7 +252,6 @@ export default function WhatsAppChannelsPage() {
 
   useEffect(() => {
     void loadChannels()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   function clearProviderFields() {

@@ -15,6 +15,7 @@ import { resolveMunicipio } from '@/lib/municipio-resolver'
 import { requireWorkspaceAuth, authErrorResponse, type AuthContext } from '@/lib/whatsapp/auth-middleware'
 import { getDefaultProfile } from '@/lib/llm-profile-repo'
 import { buildQueryFingerprint, getServedCnpjs, markAsServed } from '@/lib/served-leads-repo'
+import { findRecentPoolByFingerprint, createLeadPool } from '@/lib/lead-pool-repo'
 import { env } from '@/lib/env'
 import type { BuscaQuery } from '@/lib/schemas'
 import type { LlmCallConfig } from '@/lib/llm-providers'
@@ -313,20 +314,25 @@ export async function POST(request: NextRequest) {
       // Incremental pagination: fetch one page at a time until we collect
       // requestedLimit fresh (never-served) results or the DB is exhausted.
       //
-      // MAX_PAGES scales with requestedLimit so large requests can still fill
-      // their quota when dedup history is dense, but is capped at 20 to bound
-      // the number of DB round-trips per API call. Beyond 20 pages the tradeoff
-      // between freshness and latency/DB pressure tips negative — operators should
-      // reset the lead pool or reduce the retention window instead.
-      // We log a warning whenever the cap is hit so the condition is visible.
+      // MAX_PAGES scales with requestedLimit (capped at 50) so large requests
+      // can fill their quota even with dense dedup history.
+      //
+      // Dynamic page-size expansion: when a page returns a low fresh-ratio
+      // (< 25% of fetched rows are new), the next page fetches more rows to
+      // recover efficiency. pageSize doubles per low-ratio page up to MAX_PAGE_SIZE=200.
+      // This means "pedir mais 5" in a saturated area still scans broadly
+      // without burning extra DB round-trips on small batches.
       const accumulated: ReturnType<typeof maskContact>[] = []
       const seenInBatch = new Set<string>()  // prevents cross-page duplicates (unstable ordering)
       let page = workingFilters.page ?? 1
-      const MAX_PAGES = Math.min(Math.max(5, requestedLimit), 20)
+      const MAX_PAGES = Math.min(Math.max(10, requestedLimit * 3), 50)
+      const MAX_PAGE_SIZE = 200
+      let pageSize = requestedLimit
       let cappedEarly = false
 
       for (let i = 0; i < MAX_PAGES && accumulated.length < requestedLimit; i++) {
-        const { text, values } = buildContactsQuery({ ...workingFilters, page, limit: requestedLimit })
+        const pageSizeThisPage = pageSize  // capture before potential expansion
+        const { text, values } = buildContactsQuery({ ...workingFilters, page, limit: pageSizeThisPage })
         const rows = await client.query(text, values)
         if (rows.rows.length === 0) break
 
@@ -336,7 +342,13 @@ export async function POST(request: NextRequest) {
         fresh.forEach((r) => seenInBatch.add(r.cnpj))
         accumulated.push(...fresh)
 
-        if (rows.rows.length < requestedLimit) break  // DB returned fewer than batch — exhausted
+        // Expand scan window when dedup rate is high (< 25% fresh in this page)
+        const freshRatio = rows.rows.length > 0 ? fresh.length / rows.rows.length : 1
+        if (freshRatio < 0.25 && pageSize < MAX_PAGE_SIZE) {
+          pageSize = Math.min(pageSize * 2, MAX_PAGE_SIZE)
+        }
+
+        if (rows.rows.length < pageSizeThisPage) break  // DB returned fewer than requested — exhausted
         if (i === MAX_PAGES - 1 && accumulated.length < requestedLimit) cappedEarly = true
         page++
       }
@@ -354,6 +366,29 @@ export async function POST(request: NextRequest) {
       await markAsServed(client, authCtx.workspace_id, authCtx.dedup_actor_id, fingerprint, data.map((r) => r.cnpj))
         .catch(() => {})
 
+      // Auto-save lead pool (best-effort; deduped by fingerprint within 24 h)
+      // Returns the existing or newly-created pool id so the UI can show "Salvo".
+      let autoPoolId: string | null = null
+      if (data.length > 0) {
+        autoPoolId = await (async () => {
+          try {
+            const existing = await findRecentPoolByFingerprint(client, authCtx.workspace_id, fingerprint)
+            if (existing) return existing.id
+            const poolName = body.message.slice(0, 200)
+            const created = await createLeadPool(client, {
+              workspace_id:     authCtx.workspace_id,
+              name:             poolName,
+              query_fingerprint: fingerprint,
+              filters_json:     workingFilters,
+              leads:            data,
+            })
+            return created.id
+          } catch {
+            return null
+          }
+        })()
+      }
+
       // Narrator: generate natural PT-BR headline + subtitle (always returns a value)
       const narration = await narrateSearchResult(body.message, intent, data, total, llmProfile)
 
@@ -369,6 +404,7 @@ export async function POST(request: NextRequest) {
         headline: narration.headline,
         subtitle: narration.subtitle,
         hasCta: narration.hasCta,
+        pool_id: autoPoolId,
         meta: {
           total,
           page: workingFilters.page,

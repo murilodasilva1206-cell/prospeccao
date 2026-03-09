@@ -27,7 +27,7 @@ export const logger = pino({
     censor: '[Redacted]',
   },
   transport:
-    process.env.NODE_ENV !== 'production'
+    process.env.NODE_ENV === 'development'
       ? { target: 'pino-pretty', options: { colorize: true, translateTime: 'SYS:HH:MM:ss' } }
       : undefined, // in prod: emit newline-delimited JSON for log aggregators
 })

@@ -142,7 +142,6 @@ export async function updateChannelConfig(
   }
 
   const { rows } = await client.query(
-    // eslint-disable-next-line security/detect-object-injection
     `UPDATE whatsapp_channels SET ${sets.join(', ')} WHERE id = $1 RETURNING *`,
     values,
   )

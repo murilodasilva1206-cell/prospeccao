@@ -15,7 +15,7 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { X, Pause, Play, StopCircle, CheckCircle2, AlertCircle, Loader2, Clock, Settings } from 'lucide-react'
+import { X, Pause, Play, StopCircle, CheckCircle2, AlertCircle, Loader2, Clock, Settings, ChevronDown, ChevronUp, RefreshCw, Radio } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -51,6 +51,27 @@ interface AutomationDraft {
   max_retries: number
   working_hours_start: number | null
   working_hours_end: number | null
+}
+
+interface RecipientRow {
+  id: string
+  cnpj: string
+  razao_social: string | null
+  nome_fantasia: string | null
+  telefone: string | null
+  status: string
+  error_message: string | null
+  retry_count: number
+  sent_at: string | null
+  delivered_at: string | null
+}
+
+interface ChannelOption {
+  id: string
+  name: string
+  provider: string
+  status: string
+  phone_number: string | null
 }
 
 interface Props {
@@ -97,6 +118,30 @@ function statusColor(status: string) {
   return 'bg-zinc-100 text-zinc-600'
 }
 
+function recipientStatusLabel(s: string) {
+  switch (s) {
+    case 'pending':    return 'Pendente'
+    case 'processing': return 'Processando'
+    case 'sent':       return 'Enviado'
+    case 'failed':     return 'Falha'
+    case 'skipped':    return 'Ignorado'
+    default:           return s
+  }
+}
+
+function recipientStatusColor(s: string) {
+  if (s === 'sent')       return 'bg-emerald-100 text-emerald-700'
+  if (s === 'failed')     return 'bg-red-100 text-red-700'
+  if (s === 'processing') return 'bg-blue-100 text-blue-700'
+  if (s === 'pending')    return 'bg-zinc-100 text-zinc-600'
+  return 'bg-zinc-100 text-zinc-500'
+}
+
+function formatDate(iso: string | null): string {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
 function formatCountdown(seconds: number | null): string {
   if (seconds === null || seconds <= 0) return 'enviando...'
   if (seconds < 60) return `${seconds}s`
@@ -128,6 +173,25 @@ export default function CampaignProgressPanel({ campaignId, recipientCount, onCl
   })
   const [automationSaving, setAutomationSaving] = useState(false)
   const [automationError, setAutomationError] = useState<string | null>(null)
+
+  // Recipients grid
+  const [showRecipients, setShowRecipients]         = useState(false)
+  const [recipients, setRecipients]                 = useState<RecipientRow[]>([])
+  const [recipientsTotal, setRecipientsTotal]       = useState(0)
+  const [recipientsOffset, setRecipientsOffset]     = useState(0)
+  const [recipientsFilter, setRecipientsFilter]     = useState<string | undefined>(undefined)
+  const [recipientsLoading, setRecipientsLoading]   = useState(false)
+  const [recipientsError, setRecipientsError]       = useState<string | null>(null)
+  const [retryingId, setRetryingId]                 = useState<string | null>(null)
+  const [retryingAll, setRetryingAll]               = useState(false)
+  const recipientsInitialized                       = useRef(false)
+
+  // Channel reassignment modal
+  const [showChannelModal, setShowChannelModal]     = useState(false)
+  const [channels, setChannels]                     = useState<ChannelOption[]>([])
+  const [channelsLoading, setChannelsLoading]       = useState(false)
+  const [channelsError, setChannelsError]           = useState<string | null>(null)
+  const [assigningChannelId, setAssigningChannelId] = useState<string | null>(null)
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -282,6 +346,129 @@ export default function CampaignProgressPanel({ campaignId, recipientCount, onCl
   }, [campaignId, automationDraft, status, fetchStatus])
 
   // ---------------------------------------------------------------------------
+  // Recipients grid
+  // ---------------------------------------------------------------------------
+  const fetchRecipients = useCallback(async (offset: number, statusFilter?: string) => {
+    setRecipientsLoading(true)
+    setRecipientsError(null)
+    try {
+      const params = new URLSearchParams({ limit: '20', offset: String(offset) })
+      if (statusFilter) params.set('status', statusFilter)
+      const res = await fetch(`/api/campaigns/${campaignId}/recipients?${params}`)
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`)
+      }
+      const data = (await res.json()) as { data: RecipientRow[]; meta: { total: number } }
+      if (offset === 0) {
+        setRecipients(data.data)
+      } else {
+        setRecipients((prev) => [...prev, ...data.data])
+      }
+      setRecipientsTotal(data.meta.total)
+      setRecipientsOffset(offset + data.data.length)
+    } catch (err) {
+      setRecipientsError(err instanceof Error ? err.message : 'Erro ao carregar destinatarios')
+    } finally {
+      setRecipientsLoading(false)
+    }
+  }, [campaignId])
+
+  const handleToggleRecipients = useCallback(() => {
+    setShowRecipients((prev) => {
+      if (!prev && !recipientsInitialized.current) {
+        recipientsInitialized.current = true
+        void fetchRecipients(0, recipientsFilter)
+      }
+      return !prev
+    })
+  }, [fetchRecipients, recipientsFilter])
+
+  const handleRecipientsFilter = useCallback((f: string | undefined) => {
+    setRecipientsFilter(f)
+    setRecipientsOffset(0)
+    void fetchRecipients(0, f)
+  }, [fetchRecipients])
+
+  const handleRetryRecipient = useCallback(async (recipientId: string) => {
+    setRetryingId(recipientId)
+    setRecipientsError(null)
+    try {
+      const res = await fetch(`/api/campaigns/${campaignId}/recipients/${recipientId}/retry`, { method: 'POST' })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`)
+      }
+      await fetchRecipients(0, recipientsFilter)
+      await fetchStatus()
+    } catch (err) {
+      setRecipientsError(err instanceof Error ? err.message : 'Erro ao retentar')
+    } finally {
+      setRetryingId(null)
+    }
+  }, [campaignId, fetchRecipients, fetchStatus, recipientsFilter])
+
+  const handleRetryAllFailed = useCallback(async () => {
+    setRetryingAll(true)
+    setActionError(null)
+    try {
+      const res = await fetch(`/api/campaigns/${campaignId}/recipients/retry-all-failed`, { method: 'POST' })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`)
+      }
+      // Refresh both status counters and recipient list (if open)
+      await fetchStatus()
+      if (recipientsInitialized.current) {
+        await fetchRecipients(0, recipientsFilter)
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Erro ao retentar em lote')
+    } finally {
+      setRetryingAll(false)
+    }
+  }, [campaignId, fetchStatus, fetchRecipients, recipientsFilter])
+
+  const openChannelModal = useCallback(async () => {
+    setShowChannelModal(true)
+    setChannelsError(null)
+    setChannelsLoading(true)
+    try {
+      const res = await fetch('/api/whatsapp/channels')
+      if (!res.ok) throw new Error(`Erro ${res.status}`)
+      const data = await res.json() as { data: ChannelOption[] }
+      setChannels(data.data.filter((c) => c.status === 'CONNECTED'))
+    } catch (err) {
+      setChannelsError(err instanceof Error ? err.message : 'Erro ao carregar canais')
+    } finally {
+      setChannelsLoading(false)
+    }
+  }, [])
+
+  const handleAssignChannel = useCallback(async (channelId: string) => {
+    setAssigningChannelId(channelId)
+    setChannelsError(null)
+    try {
+      const res = await fetch(`/api/campaigns/${campaignId}/reassign-channel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channel_id: channelId }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`)
+      }
+      setShowChannelModal(false)
+      setActionError(null)
+      await fetchStatus()
+    } catch (err) {
+      setChannelsError(err instanceof Error ? err.message : 'Erro ao trocar canal')
+    } finally {
+      setAssigningChannelId(null)
+    }
+  }, [campaignId, fetchStatus])
+
+  // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
   const total = status?.total_count ?? recipientCount
@@ -293,6 +480,7 @@ export default function CampaignProgressPanel({ campaignId, recipientCount, onCl
   const isTerminal = status?.is_terminal ?? false
   const isPaused = currentStatus === 'paused'
   const isSending = currentStatus === 'sending'
+  const canRetryAll = failed > 0 && ['sending', 'paused', 'completed_with_errors'].includes(currentStatus)
   const hasWorkingHours = automationDraft.working_hours_start !== null && automationDraft.working_hours_end !== null
 
   return (
@@ -363,6 +551,22 @@ export default function CampaignProgressPanel({ campaignId, recipientCount, onCl
             <p className="text-xs text-zinc-500">Pendentes</p>
           </div>
         </div>
+
+        {/* Retry-all button */}
+        {canRetryAll && (
+          <button
+            onClick={() => void handleRetryAllFailed()}
+            disabled={retryingAll || actionLoading !== null}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+          >
+            {retryingAll ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <RefreshCw className="size-4" />
+            )}
+            Retentar todos os falhos ({failed})
+          </button>
+        )}
 
         {/* Next send countdown */}
         {isSending && !isTerminal && (
@@ -440,6 +644,16 @@ export default function CampaignProgressPanel({ campaignId, recipientCount, onCl
                 Retomar
               </button>
             )}
+            {isPaused && (
+              <button
+                onClick={() => void openChannelModal()}
+                disabled={actionLoading !== null}
+                title="Trocar canal de envio"
+                className="flex items-center justify-center rounded-lg border border-zinc-200 p-2 text-zinc-500 hover:bg-zinc-50 hover:text-zinc-700 disabled:opacity-50"
+              >
+                <Radio className="size-4" />
+              </button>
+            )}
             <button
               onClick={() => handleAction('cancel')}
               disabled={actionLoading !== null}
@@ -464,6 +678,120 @@ export default function CampaignProgressPanel({ campaignId, recipientCount, onCl
         )}
 
         {/* Automation editor */}
+        {/* Recipients grid */}
+        <div className="border-t border-zinc-100 pt-3">
+          <button
+            onClick={handleToggleRecipients}
+            className="flex w-full items-center justify-between text-xs font-medium text-zinc-600 hover:text-zinc-900"
+          >
+            <span>Ver destinatários ({recipientsTotal > 0 ? recipientsTotal : status?.total_count ?? recipientCount})</span>
+            {showRecipients ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+          </button>
+
+          {showRecipients && (
+            <div className="mt-3 space-y-2">
+              {/* Filter pills */}
+              <div className="flex gap-1.5 flex-wrap">
+                {([
+                    [undefined,     'Todos'],
+                    ['failed',      'Falhos'],
+                    ['sent',        'Enviados'],
+                    ['pending',     'Pendentes'],
+                    ['processing',  'Processando'],
+                  ] as const).map(([f, label]) => (
+                  <button
+                    key={f ?? 'all'}
+                    onClick={() => handleRecipientsFilter(f)}
+                    className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${
+                      recipientsFilter === f
+                        ? 'bg-zinc-800 text-white'
+                        : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Error */}
+              {recipientsError && (
+                <p className="text-xs text-red-600">{recipientsError}</p>
+              )}
+
+              {/* Rows */}
+              <div className="space-y-1">
+                {recipients.map((r) => {
+                  const name = r.nome_fantasia ?? r.razao_social ?? r.cnpj
+                  const displayName = name.length > 28 ? name.slice(0, 27) + '…' : name
+                  return (
+                    <div key={r.id} className="rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="min-w-0 truncate font-medium text-zinc-800" title={name}>
+                          {displayName}
+                        </span>
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${recipientStatusColor(r.status)}`}>
+                          {recipientStatusLabel(r.status)}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex items-center justify-between gap-2 text-zinc-500">
+                        <div className="min-w-0 flex-1 space-y-0.5">
+                          {r.error_message && (
+                            <p className="truncate text-red-500" title={r.error_message}>
+                              {r.error_message}
+                            </p>
+                          )}
+                          <p>
+                            Tentativas: {r.retry_count} · Enviado: {formatDate(r.sent_at)} · Entregue: {formatDate(r.delivered_at)}
+                          </p>
+                        </div>
+                        {r.status === 'failed' && (
+                          <button
+                            onClick={() => void handleRetryRecipient(r.id)}
+                            disabled={retryingId === r.id}
+                            title="Retentar"
+                            className="shrink-0 flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100 disabled:opacity-50"
+                          >
+                            {retryingId === r.id ? (
+                              <Loader2 className="size-3 animate-spin" />
+                            ) : (
+                              <RefreshCw className="size-3" />
+                            )}
+                            Retentar
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+
+                {/* Empty state */}
+                {!recipientsLoading && recipients.length === 0 && (
+                  <p className="py-3 text-center text-xs text-zinc-400">Nenhum destinatário encontrado.</p>
+                )}
+
+                {/* Load more */}
+                {recipients.length < recipientsTotal && (
+                  <button
+                    onClick={() => void fetchRecipients(recipientsOffset, recipientsFilter)}
+                    disabled={recipientsLoading}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-zinc-200 py-1.5 text-xs text-zinc-600 hover:bg-zinc-50 disabled:opacity-50"
+                  >
+                    {recipientsLoading ? <Loader2 className="size-3 animate-spin" /> : null}
+                    Carregar mais
+                  </button>
+                )}
+
+                {/* Loading indicator (first load) */}
+                {recipientsLoading && recipients.length === 0 && (
+                  <div className="flex justify-center py-3">
+                    <Loader2 className="size-4 animate-spin text-zinc-400" />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
         {showAutomationEdit && (
           <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 space-y-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
@@ -572,6 +900,62 @@ export default function CampaignProgressPanel({ campaignId, recipientCount, onCl
           </div>
         )}
       </div>
+
+      {/* Channel reassignment modal */}
+      {showChannelModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-2xl border border-zinc-200 bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-900">Trocar canal de envio</h3>
+                <p className="text-xs text-zinc-500">Selecione um canal conectado</p>
+              </div>
+              <button
+                onClick={() => { setShowChannelModal(false); setChannelsError(null) }}
+                className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-2" style={{ maxHeight: '320px', overflowY: 'auto' }}>
+              {channelsError && (
+                <p className="text-xs text-red-600">{channelsError}</p>
+              )}
+              {channelsLoading && (
+                <div className="flex justify-center py-6">
+                  <Loader2 className="size-5 animate-spin text-zinc-400" />
+                </div>
+              )}
+              {!channelsLoading && channels.length === 0 && !channelsError && (
+                <p className="py-6 text-center text-sm text-zinc-400">
+                  Nenhum canal conectado disponível.
+                </p>
+              )}
+              {channels.map((ch) => (
+                <button
+                  key={ch.id}
+                  onClick={() => void handleAssignChannel(ch.id)}
+                  disabled={assigningChannelId !== null}
+                  className="flex w-full items-center justify-between rounded-xl border border-zinc-200 px-4 py-3 hover:bg-zinc-50 disabled:opacity-50"
+                >
+                  <div className="text-left">
+                    <p className="text-sm font-medium text-zinc-800">{ch.name}</p>
+                    <p className="text-xs text-zinc-500">
+                      {ch.provider}{ch.phone_number ? ` · ${ch.phone_number}` : ''}
+                    </p>
+                  </div>
+                  {assigningChannelId === ch.id ? (
+                    <Loader2 className="size-4 animate-spin text-zinc-400" />
+                  ) : (
+                    <Radio className="size-4 text-emerald-500" />
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

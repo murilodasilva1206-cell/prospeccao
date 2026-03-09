@@ -25,6 +25,10 @@ import {
   CheckCircle2,
   XCircle,
   Building2,
+  Bookmark,
+  History,
+  Trash2,
+  RefreshCw,
 } from 'lucide-react'
 import CampaignWizard from './CampaignWizard'
 
@@ -59,6 +63,7 @@ interface AgentResponse {
   headline?: string  // server-generated narration (ai-narrator.ts)
   subtitle?: string
   hasCta?: boolean
+  pool_id?: string | null  // auto-saved lead pool id from backend
 }
 
 interface PendingCampaign {
@@ -66,6 +71,14 @@ interface PendingCampaign {
   confirmationToken: string
   recipients: PublicEmpresa[]
   nicho?: string
+}
+
+interface LeadPool {
+  id: string
+  name: string
+  lead_count: number
+  created_at: string
+  query_fingerprint: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +115,20 @@ export default function AgentChat() {
     sent: number
     failed: number
   } | null>(null)
+
+  // Lead pool save state (per message id)
+  const [savedPoolIds, setSavedPoolIds]   = useState<Record<string, string>>({})  // msgId → poolId
+  const [savingPoolIds, setSavingPoolIds] = useState<Record<string, boolean>>({}) // msgId → loading
+
+  // History view
+  const [view, setView]                     = useState<'chat' | 'history'>('chat')
+  const [pools, setPools]                   = useState<LeadPool[]>([])
+  const [poolsTotal, setPoolsTotal]         = useState(0)
+  const [poolsLoading, setPoolsLoading]     = useState(false)
+  const [poolsError, setPoolsError]         = useState<string | null>(null)
+  const [deletingPoolId, setDeletingPoolId] = useState<string | null>(null)
+  const [loadingPoolId, setLoadingPoolId]   = useState<string | null>(null)
+  const poolsInitialized                    = useRef(false)
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -158,11 +185,17 @@ export default function AgentChat() {
 
       if (data.action === 'search' && data.data && data.meta) {
         const filters = data.filters ?? {}
+        const msgId = genId()
+
+        // Pre-populate savedPoolIds if backend auto-saved a pool for this search
+        if (data.pool_id) {
+          setSavedPoolIds((prev) => ({ ...prev, [msgId]: data.pool_id! }))
+        }
 
         // Backend always provides headline + subtitle (ai-narrator has its own deterministic fallback).
         // The || guards against empty strings in case of a backend regression.
         const agentMsg: ChatMessage = {
-          id: genId(),
+          id: msgId,
           role: 'agent',
           text: data.headline || 'Resultados encontrados.',
           subtitle: data.subtitle || undefined,
@@ -262,6 +295,130 @@ export default function AgentChat() {
   )
 
   // ---------------------------------------------------------------------------
+  // Save lead pool
+  // ---------------------------------------------------------------------------
+
+  const saveLeadPool = useCallback(async (msg: ChatMessage) => {
+    if (!msg.results || msg.results.length === 0 || savingPoolIds[msg.id]) return
+    const isCopy = !!savedPoolIds[msg.id]
+    const ts = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    const baseName = msg.text.slice(0, 190)
+    const name = isCopy ? `${baseName} (cópia ${ts})` : baseName
+    setSavingPoolIds((prev) => ({ ...prev, [msg.id]: true }))
+    try {
+      const res = await fetch('/api/lead-pools', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          filters_json: msg.filters,
+          leads: msg.results,
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(err.error ?? `Erro ${res.status}`)
+      }
+      const data = await res.json() as { data: { id: string } }
+      setSavedPoolIds((prev) => ({ ...prev, [msg.id]: data.data.id }))
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        { id: genId(), role: 'system', text: 'Nao foi possivel salvar a lista. Tente novamente.' },
+      ])
+    } finally {
+      setSavingPoolIds((prev) => ({ ...prev, [msg.id]: false }))
+    }
+  }, [savedPoolIds, savingPoolIds])
+
+  // ---------------------------------------------------------------------------
+  // Lead pool history
+  // ---------------------------------------------------------------------------
+
+  const fetchPools = useCallback(async () => {
+    setPoolsLoading(true)
+    setPoolsError(null)
+    try {
+      const res = await fetch('/api/lead-pools?limit=20&offset=0')
+      if (!res.ok) throw new Error(`Erro ${res.status}`)
+      const data = await res.json() as { data: LeadPool[]; meta: { total: number } }
+      setPools(data.data)
+      setPoolsTotal(data.meta.total)
+    } catch (err) {
+      setPoolsError(err instanceof Error ? err.message : 'Erro ao carregar listas')
+    } finally {
+      setPoolsLoading(false)
+    }
+  }, [])
+
+  const handleViewChange = useCallback((v: 'chat' | 'history') => {
+    setView(v)
+    if (v === 'history' && !poolsInitialized.current) {
+      poolsInitialized.current = true
+      void fetchPools()
+    }
+  }, [fetchPools])
+
+  const deletePool = useCallback(async (poolId: string) => {
+    setDeletingPoolId(poolId)
+    setPoolsError(null)
+    try {
+      const res = await fetch(`/api/lead-pools/${poolId}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error(`Erro ${res.status}`)
+      setPools((prev) => prev.filter((p) => p.id !== poolId))
+      setPoolsTotal((prev) => prev - 1)
+    } catch (err) {
+      setPoolsError(err instanceof Error ? err.message : 'Erro ao excluir lista')
+    } finally {
+      setDeletingPoolId(null)
+    }
+  }, [])
+
+  const startCampaignFromPool = useCallback(async (pool: LeadPool) => {
+    setLoadingPoolId(pool.id)
+    setPoolsError(null)
+    try {
+      const detailRes = await fetch(`/api/lead-pools/${pool.id}`)
+      if (!detailRes.ok) throw new Error(`Erro ${detailRes.status}`)
+      const detail = await detailRes.json() as { data: LeadPool & { leads_json: PublicEmpresa[] } }
+      const leads = detail.data.leads_json ?? []
+      if (leads.length === 0) throw new Error('Esta lista não tem leads.')
+
+      const campaignRes = await fetch('/api/campaigns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: `Campanha: ${pool.name.slice(0, 100)}`,
+          recipients: leads.map((r) => ({
+            cnpj: r.cnpj,
+            razao_social: r.razaoSocial,
+            nome_fantasia: r.nomeFantasia || undefined,
+            telefone: r.telefone1 || r.telefone2 || undefined,
+            email: r.email || undefined,
+            municipio: r.municipio || undefined,
+            uf: r.uf || undefined,
+          })),
+        }),
+      })
+      if (!campaignRes.ok) {
+        const err = await campaignRes.json().catch(() => ({})) as { error?: string }
+        throw new Error(err.error ?? `Erro ${campaignRes.status}`)
+      }
+      const campaignData = await campaignRes.json() as { data: { id: string }; confirmation_token: string }
+      setPendingCampaign({
+        campaignId: campaignData.data.id,
+        confirmationToken: campaignData.confirmation_token,
+        recipients: leads,
+      })
+      setView('chat')
+    } catch (err) {
+      setPoolsError(err instanceof Error ? err.message : 'Erro ao iniciar campanha')
+    } finally {
+      setLoadingPoolId(null)
+    }
+  }, [])
+
+  // ---------------------------------------------------------------------------
   // Campaign complete
   // ---------------------------------------------------------------------------
 
@@ -318,18 +475,132 @@ export default function AgentChat() {
       {open && (
         <div className="fixed bottom-24 right-6 z-40 flex w-96 flex-col rounded-2xl border border-zinc-200 bg-white shadow-2xl">
           {/* Header */}
-          <div className="flex items-center justify-between rounded-t-2xl bg-emerald-600 px-4 py-3">
-            <div className="flex items-center gap-2">
-              <Bot className="size-5 text-white" />
-              <div>
-                <p className="text-sm font-semibold text-white">Agente de Prospeccao</p>
-                <p className="text-xs text-emerald-200">Busca empresas no CNPJ</p>
+          <div className="rounded-t-2xl bg-emerald-600 px-4 pt-3 pb-0">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Bot className="size-5 text-white" />
+                <div>
+                  <p className="text-sm font-semibold text-white">Agente de Prospeccao</p>
+                  <p className="text-xs text-emerald-200">Busca empresas no CNPJ</p>
+                </div>
               </div>
             </div>
-            <div />
+            {/* Tabs */}
+            <div className="mt-2 flex gap-1">
+              <button
+                onClick={() => handleViewChange('chat')}
+                className={`flex items-center gap-1.5 rounded-t-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                  view === 'chat'
+                    ? 'bg-white text-emerald-700'
+                    : 'text-emerald-100 hover:text-white'
+                }`}
+              >
+                <MessageSquare className="size-3.5" />
+                Chat
+              </button>
+              <button
+                onClick={() => handleViewChange('history')}
+                className={`flex items-center gap-1.5 rounded-t-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                  view === 'history'
+                    ? 'bg-white text-emerald-700'
+                    : 'text-emerald-100 hover:text-white'
+                }`}
+              >
+                <History className="size-3.5" />
+                Listas salvas
+                {poolsTotal > 0 && (
+                  <span className="rounded-full bg-emerald-500 px-1.5 py-0.5 text-xs text-white">
+                    {poolsTotal}
+                  </span>
+                )}
+              </button>
+            </div>
           </div>
 
-          {/* Messages */}
+          {/* History view */}
+          {view === 'history' && (
+            <div className="flex-1 overflow-y-auto px-4 py-3" style={{ maxHeight: '400px', minHeight: '200px' }}>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs font-medium text-zinc-500">
+                  {poolsTotal > 0 ? `${poolsTotal} lista${poolsTotal > 1 ? 's' : ''} salva${poolsTotal > 1 ? 's' : ''}` : 'Listas salvas'}
+                </p>
+                <button
+                  onClick={() => void fetchPools()}
+                  disabled={poolsLoading}
+                  title="Atualizar"
+                  className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 disabled:opacity-40"
+                >
+                  <RefreshCw className={`size-3.5 ${poolsLoading ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+
+              {poolsError && (
+                <p className="mb-2 text-xs text-red-600">{poolsError}</p>
+              )}
+
+              {poolsLoading && pools.length === 0 && (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="size-5 animate-spin text-zinc-400" />
+                </div>
+              )}
+
+              {!poolsLoading && pools.length === 0 && !poolsError && (
+                <div className="py-8 text-center text-sm text-zinc-400">
+                  <Bookmark className="mx-auto mb-2 size-8 opacity-30" />
+                  <p>Nenhuma lista salva ainda.</p>
+                  <p className="mt-1 text-xs">Buscas com resultados são salvas automaticamente. Use &quot;Salvar cópia&quot; para duplicar.</p>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                {pools.map((pool) => (
+                  <div key={pool.id} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-zinc-800" title={pool.name}>
+                          {pool.name}
+                        </p>
+                        <p className="mt-0.5 text-xs text-zinc-500">
+                          {pool.lead_count} empresa{pool.lead_count !== 1 ? 's' : ''} ·{' '}
+                          {new Date(pool.created_at).toLocaleDateString('pt-BR', {
+                            day: '2-digit', month: '2-digit', year: '2-digit',
+                          })}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => void deletePool(pool.id)}
+                        disabled={deletingPoolId === pool.id || loadingPoolId === pool.id}
+                        title="Excluir lista"
+                        className="shrink-0 rounded-lg p-1 text-zinc-400 hover:bg-red-50 hover:text-red-500 disabled:opacity-40"
+                      >
+                        {deletingPoolId === pool.id ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="size-3.5" />
+                        )}
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => void startCampaignFromPool(pool)}
+                      disabled={loadingPoolId === pool.id || deletingPoolId === pool.id}
+                      className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                    >
+                      {loadingPoolId === pool.id ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Users className="size-3.5" />
+                      )}
+                      Iniciar campanha
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Messages + Input (chat view) */}
+          {view === 'chat' && (
+          <>
           <div className="flex-1 overflow-y-auto px-4 py-3" style={{ maxHeight: '400px', minHeight: '200px' }}>
             {messages.length === 0 && (
               <div className="py-8 text-center text-sm text-zinc-400">
@@ -385,14 +656,33 @@ export default function AgentChat() {
 
                     {/* CTA */}
                     {msg.hasCta && (
-                      <button
-                        onClick={() => startCampaign(msg)}
-                        disabled={loading}
-                        className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-                      >
-                        <Users className="size-3.5" />
-                        Iniciar primeiro contato
-                      </button>
+                      <div className="mt-2 flex gap-1.5">
+                        <button
+                          onClick={() => startCampaign(msg)}
+                          disabled={loading}
+                          className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          <Users className="size-3.5" />
+                          Iniciar primeiro contato
+                        </button>
+                        <button
+                          onClick={() => void saveLeadPool(msg)}
+                          disabled={loading || !!savingPoolIds[msg.id]}
+                          title={savedPoolIds[msg.id] ? 'Salvar uma cópia separada desta lista' : 'Salvar lista de leads'}
+                          className={`flex items-center gap-1 rounded-xl border px-2.5 py-2 text-xs font-medium disabled:opacity-50 ${
+                            savedPoolIds[msg.id]
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                              : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50'
+                          }`}
+                        >
+                          {savingPoolIds[msg.id] ? (
+                            <Loader2 className="size-3.5 animate-spin" />
+                          ) : (
+                            <Bookmark className="size-3.5" />
+                          )}
+                          {savedPoolIds[msg.id] ? 'Salvar cópia' : 'Salvar'}
+                        </button>
+                      </div>
                     )}
                   </div>
                 )}
@@ -435,6 +725,7 @@ export default function AgentChat() {
 
           {/* Input */}
           <div className="border-t border-zinc-100 p-3">
+
             <div className="flex items-end gap-2">
               <textarea
                 ref={inputRef}
@@ -456,6 +747,8 @@ export default function AgentChat() {
             </div>
             <p className="mt-1 text-right text-xs text-zinc-400">{input.length}/1000</p>
           </div>
+          </>
+          )}
         </div>
       )}
 

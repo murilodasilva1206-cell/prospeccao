@@ -436,6 +436,126 @@ export async function findRecipientsByCampaign(
   return rows.map(rowToRecipient)
 }
 
+/**
+ * Manually reset a failed recipient so the cron picks it up again.
+ * Uses a CTE so both the recipient reset and the campaign counter decrement
+ * happen atomically in a single statement.
+ *
+ * - retry_count is NOT reset — manual retry counts toward max_retries.
+ * - Clears provider_message_id, sent_at, delivered_at so delivery state is fresh.
+ * - Decrements campaigns.failed_count with GREATEST guard (never goes negative).
+ * - Returns null if recipient is not found, belongs to another campaign, or
+ *   is not in status='failed' (idempotent / concurrent-safe).
+ */
+export async function retryRecipient(
+  client: PoolClient,
+  campaignId: string,
+  recipientId: string,
+): Promise<CampaignRecipient | null> {
+  const { rows } = await client.query(
+    `WITH updated AS (
+       UPDATE campaign_recipients
+       SET status                = 'pending',
+           error_message         = NULL,
+           provider_message_id   = NULL,
+           sent_at               = NULL,
+           delivered_at          = NULL,
+           next_retry_at         = NULL,
+           processing_started_at = NULL
+       WHERE id          = $1
+         AND campaign_id = $2
+         AND status      = 'failed'
+       RETURNING *
+     ),
+     _decrement AS (
+       UPDATE campaigns
+       SET failed_count = GREATEST(failed_count - 1, 0)
+       WHERE id = $2
+         AND EXISTS (SELECT 1 FROM updated)
+     )
+     SELECT * FROM updated`,
+    [recipientId, campaignId],
+  )
+  return rows.length > 0 ? rowToRecipient(rows[0]) : null
+}
+
+/**
+ * Reset ALL failed recipients in a campaign back to 'pending' in one statement.
+ * Atomically corrects campaigns.failed_count to 0 when any rows are updated.
+ * Returns the number of recipients reset (0 if none were failed).
+ */
+export async function retryAllFailed(
+  client: PoolClient,
+  campaignId: string,
+): Promise<number> {
+  const { rows } = await client.query(
+    `WITH updated AS (
+       UPDATE campaign_recipients
+       SET status                = 'pending',
+           error_message         = NULL,
+           provider_message_id   = NULL,
+           sent_at               = NULL,
+           delivered_at          = NULL,
+           next_retry_at         = NULL,
+           processing_started_at = NULL
+       WHERE campaign_id = $1
+         AND status      = 'failed'
+       RETURNING id
+     ),
+     _reset AS (
+       UPDATE campaigns
+       SET failed_count = 0
+       WHERE id = $1
+         AND EXISTS (SELECT 1 FROM updated)
+     )
+     SELECT COUNT(*)::int AS n FROM updated`,
+    [campaignId],
+  )
+  return rows[0]?.n ?? 0
+}
+
+/**
+ * Reopen a completed_with_errors campaign back to sending so the cron
+ * processes any newly-pending recipients from a manual retry.
+ * Only acts when campaign is in 'completed_with_errors' state.
+ */
+export async function reopenCampaignToSending(
+  client: PoolClient,
+  campaignId: string,
+): Promise<boolean> {
+  const { rowCount } = await client.query(
+    `UPDATE campaigns
+     SET status       = 'sending',
+         next_send_at = NOW()
+     WHERE id     = $1
+       AND status  = 'completed_with_errors'`,
+    [campaignId],
+  )
+  return (rowCount ?? 0) > 0
+}
+
+/**
+ * Reassign the WhatsApp channel on a paused campaign.
+ * Does NOT change campaign status or message fields.
+ * Atomic guard: AND status='paused' ensures we never reassign a running campaign.
+ * Returns the updated Campaign, or null if the guard failed (concurrent resume/cancel).
+ */
+export async function reassignCampaignChannel(
+  client: PoolClient,
+  campaignId: string,
+  channelId: string,
+): Promise<Campaign | null> {
+  const { rows } = await client.query(
+    `UPDATE campaigns
+     SET channel_id = $2
+     WHERE id     = $1
+       AND status  = 'paused'
+     RETURNING *`,
+    [campaignId, channelId],
+  )
+  return rows.length > 0 ? rowToCampaign(rows[0]) : null
+}
+
 export async function countRecipients(
   client: PoolClient,
   campaignId: string,
@@ -776,7 +896,6 @@ export async function getCampaignProgress(
   )
   const map: Record<string, number> = {}
   for (const r of rows) {
-    // eslint-disable-next-line security/detect-object-injection
     map[r.status as string] = r.count as number
   }
   return {

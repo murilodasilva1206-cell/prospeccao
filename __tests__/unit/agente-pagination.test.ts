@@ -17,11 +17,16 @@ import { NextRequest } from 'next/server'
 // Hoisted mocks — must be vi.hoisted so factories can reference them
 // ---------------------------------------------------------------------------
 
-const { mockClientQuery, mockGetServedCnpjs, mockMarkAsServed, mockCallAiAgent } = vi.hoisted(() => ({
+const {
+  mockClientQuery, mockGetServedCnpjs, mockMarkAsServed, mockCallAiAgent,
+  mockFindRecentPool, mockCreateLeadPool,
+} = vi.hoisted(() => ({
   mockClientQuery:    vi.fn(),
   mockGetServedCnpjs: vi.fn(),
   mockMarkAsServed:   vi.fn(),
   mockCallAiAgent:    vi.fn(),
+  mockFindRecentPool: vi.fn(),
+  mockCreateLeadPool: vi.fn(),
 }))
 
 vi.mock('@/lib/database', () => ({
@@ -78,6 +83,13 @@ vi.mock('@/lib/ai-narrator', () => ({
   }),
 }))
 
+// Auto-save must not hit mockClientQuery — findRecentPoolByFingerprint and
+// createLeadPool both receive the real client and would count as extra query calls.
+vi.mock('@/lib/lead-pool-repo', () => ({
+  findRecentPoolByFingerprint: mockFindRecentPool,
+  createLeadPool:              mockCreateLeadPool,
+}))
+
 // ---------------------------------------------------------------------------
 // Imports (after mocks)
 // ---------------------------------------------------------------------------
@@ -128,6 +140,8 @@ function makeSearchIntent(limit: number) {
 beforeEach(() => {
   vi.clearAllMocks()
   mockMarkAsServed.mockResolvedValue(undefined)
+  mockFindRecentPool.mockResolvedValue(null)
+  mockCreateLeadPool.mockResolvedValue({ id: 'pool-auto', name: 'test' })
 })
 
 // ---------------------------------------------------------------------------
@@ -206,22 +220,23 @@ describe('/api/agente — incremental pagination loop', () => {
     expect(mockClientQuery).toHaveBeenCalledTimes(2)
   })
 
-  it('returns partial (empty) results and succeeds without error when pagination cap is reached', async () => {
-    // limit=3 → MAX_PAGES = min(max(5,3), 20) = 5.
-    // Every DB page returns exactly 3 rows (= limit), all already served.
-    // The loop runs all 5 pages, accumulates nothing, and sets cappedEarly=true.
+  it('returns partial (empty) results and succeeds without error when pagination scan is exhausted', async () => {
+    // limit=3 → MAX_PAGES = min(max(10, 3*3), 50) = 10.
+    // Every page returns exactly 3 rows (all already served).
+    //
+    // Dynamic expansion behaviour (pageSizeThisPage captured before update):
+    //   Page 1: asks for 3 → gets 3 → freshRatio=0 → pageSize doubles to 6 → 3 < 3? No → continue
+    //   Page 2: asks for 6 → mock only has 3 → 3 < 6? Yes → DB exhausted → BREAK
+    //
+    // Total: 1 count + 2 page queries = 3 calls.
     mockCallAiAgent.mockResolvedValue(makeSearchIntent(3))
-    const servedAll = new Set(['p1a', 'p1b', 'p1c', 'p2a', 'p2b', 'p2c', 'p3a', 'p3b', 'p3c', 'p4a', 'p4b', 'p4c', 'p5a', 'p5b', 'p5c'])
+    const servedAll = new Set(['p1a', 'p1b', 'p1c', 'p2a', 'p2b', 'p2c'])
     mockGetServedCnpjs.mockResolvedValue(servedAll)
 
-    // count + 5 full pages (each returns exactly requestedLimit=3 rows, so no exhaustion break)
     mockClientQuery
-      .mockResolvedValueOnce({ rows: [{ total: '50' }] })
-      .mockResolvedValueOnce({ rows: [makeRow('p1a'), makeRow('p1b'), makeRow('p1c')] })
-      .mockResolvedValueOnce({ rows: [makeRow('p2a'), makeRow('p2b'), makeRow('p2c')] })
-      .mockResolvedValueOnce({ rows: [makeRow('p3a'), makeRow('p3b'), makeRow('p3c')] })
-      .mockResolvedValueOnce({ rows: [makeRow('p4a'), makeRow('p4b'), makeRow('p4c')] })
-      .mockResolvedValueOnce({ rows: [makeRow('p5a'), makeRow('p5b'), makeRow('p5c')] })
+      .mockResolvedValueOnce({ rows: [{ total: '50' }] })                                         // count
+      .mockResolvedValueOnce({ rows: [makeRow('p1a'), makeRow('p1b'), makeRow('p1c')] })           // page 1 (pageSize=3)
+      .mockResolvedValueOnce({ rows: [makeRow('p2a'), makeRow('p2b'), makeRow('p2c')] })           // page 2 (pageSize=6, only 3 returned → exhausted)
 
     const res = await POST(makeRequest())
     const body = await res.json()
@@ -231,7 +246,62 @@ describe('/api/agente — incremental pagination loop', () => {
     expect(body.action).toBe('search')
     expect(body.data).toHaveLength(0)
 
-    // 1 count + 5 page queries = 6 total
-    expect(mockClientQuery).toHaveBeenCalledTimes(6)
+    // 1 count + 2 page queries = 3 total (DB exhausted early due to dynamic pageSize expansion)
+    expect(mockClientQuery).toHaveBeenCalledTimes(3)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Auto-save (lead pool) behaviour
+// ---------------------------------------------------------------------------
+
+describe('/api/agente — auto-save lead pool', () => {
+  /** Standard DB setup: count=5, one page with 2 fresh rows */
+  function setupTwoFreshRows() {
+    mockGetServedCnpjs.mockResolvedValue(new Set())
+    mockClientQuery
+      .mockResolvedValueOnce({ rows: [{ total: '5' }] })
+      .mockResolvedValueOnce({ rows: [makeRow('111'), makeRow('222')] })
+  }
+
+  it('returns pool_id in response when auto-save creates a new pool', async () => {
+    mockCallAiAgent.mockResolvedValue(makeSearchIntent(2))
+    setupTwoFreshRows()
+    mockFindRecentPool.mockResolvedValue(null)  // no existing pool
+    mockCreateLeadPool.mockResolvedValue({ id: 'new-pool-123', name: 'test' })
+
+    const res = await POST(makeRequest())
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.pool_id).toBe('new-pool-123')
+    expect(mockCreateLeadPool).toHaveBeenCalledTimes(1)
+  })
+
+  it('reuses existing pool via fingerprint within 24h and does not create a duplicate', async () => {
+    mockCallAiAgent.mockResolvedValue(makeSearchIntent(2))
+    setupTwoFreshRows()
+    mockFindRecentPool.mockResolvedValue({ id: 'existing-pool-456', name: 'cached' })
+
+    const res = await POST(makeRequest())
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.pool_id).toBe('existing-pool-456')
+    expect(mockCreateLeadPool).not.toHaveBeenCalled()
+  })
+
+  it('returns 200 with results even when auto-save throws (best-effort)', async () => {
+    mockCallAiAgent.mockResolvedValue(makeSearchIntent(2))
+    setupTwoFreshRows()
+    mockFindRecentPool.mockRejectedValue(new Error('DB error'))
+
+    const res = await POST(makeRequest())
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.action).toBe('search')
+    expect(body.data).toHaveLength(2)
+    expect(body.pool_id).toBeNull()
   })
 })

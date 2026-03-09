@@ -436,6 +436,32 @@ export const SetCampaignMessageSchema = z
   })
 export type SetCampaignMessage = z.infer<typeof SetCampaignMessageSchema>
 
+/** POST /api/lead-pools — save an agent search result as a named lead pool */
+export const CreateLeadPoolSchema = z.object({
+  name: SafeString(200).refine((s) => s.length > 0, 'Nome nao pode ser vazio'),
+  query_fingerprint: z.string().max(200).optional(),
+  filters_json: z.record(z.string(), z.unknown()).optional(),
+  leads: z.array(z.object({
+    cnpj:          z.string(),
+    razaoSocial:   z.string(),
+    nomeFantasia:  z.string().optional().nullable(),
+    uf:            z.string().optional().nullable(),
+    municipio:     z.string().optional().nullable(),
+    cnaePrincipal: z.string().optional().nullable(),
+    situacao:      z.string().optional().nullable(),
+    telefone1:     z.string().optional().nullable(),
+    telefone2:     z.string().optional().nullable(),
+    email:         z.string().optional().nullable(),
+  })).min(1).max(500),
+})
+export type CreateLeadPool = z.infer<typeof CreateLeadPoolSchema>
+
+/** GET /api/lead-pools pagination */
+export const LeadPoolPaginationSchema = z.object({
+  limit:  z.coerce.number().int().min(1).max(100).default(20),
+  offset: z.coerce.number().int().min(0).default(0),
+})
+
 /** GET /api/campaigns/:id/recipients pagination */
 export const RecipientPaginationSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
