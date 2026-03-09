@@ -40,16 +40,16 @@ const LEAD_C = makeLead('33333333000173', { razaoSocial: 'Gamma Ltda', telefone1
 
 describe('buildRecipients — empty selection', () => {
   it('throws when selectedIds is empty (no lead selected)', () => {
-    expect(() => buildRecipients([LEAD_A, LEAD_B], {})).toThrow('Selecione ao menos 1 lead.')
+    expect(() => buildRecipients([LEAD_A, LEAD_B], new Set())).toThrow('Selecione ao menos 1 lead.')
   })
 
   it('throws when all leads are explicitly set to false', () => {
-    const none = { [LEAD_A.cnpj]: false, [LEAD_B.cnpj]: false }
+    const none = new Set<string>()
     expect(() => buildRecipients([LEAD_A, LEAD_B], none)).toThrow('Selecione ao menos 1 lead.')
   })
 
   it('throws when leads array is empty regardless of selectedIds', () => {
-    const ids = { [LEAD_A.cnpj]: true }
+    const ids = new Set([LEAD_A.cnpj])
     expect(() => buildRecipients([], ids)).toThrow('Selecione ao menos 1 lead.')
   })
 })
@@ -60,7 +60,7 @@ describe('buildRecipients — empty selection', () => {
 
 describe('buildRecipients — partial selection', () => {
   it('returns only selected leads when selection is a strict subset', () => {
-    const selectedIds = { [LEAD_A.cnpj]: true, [LEAD_B.cnpj]: false }
+    const selectedIds = new Set([LEAD_A.cnpj])
     const result = buildRecipients([LEAD_A, LEAD_B, LEAD_C], selectedIds)
 
     expect(result).toHaveLength(1)
@@ -69,11 +69,7 @@ describe('buildRecipients — partial selection', () => {
   })
 
   it('includes multiple selected leads in original order', () => {
-    const selectedIds = {
-      [LEAD_A.cnpj]: true,
-      [LEAD_B.cnpj]: false,
-      [LEAD_C.cnpj]: true,
-    }
+    const selectedIds = new Set([LEAD_A.cnpj, LEAD_C.cnpj])
     const result = buildRecipients([LEAD_A, LEAD_B, LEAD_C], selectedIds)
 
     expect(result).toHaveLength(2)
@@ -84,7 +80,7 @@ describe('buildRecipients — partial selection', () => {
   })
 
   it('campaign is NOT created for deselected leads (no phantom recipients)', () => {
-    const selectedIds = { [LEAD_B.cnpj]: true }
+    const selectedIds = new Set([LEAD_B.cnpj])
     const result = buildRecipients([LEAD_A, LEAD_B, LEAD_C], selectedIds)
 
     const cnpjs = result.map((r) => r.cnpj)
@@ -100,11 +96,7 @@ describe('buildRecipients — partial selection', () => {
 
 describe('buildRecipients — full selection', () => {
   it('returns all leads when every lead is selected', () => {
-    const allSelected = {
-      [LEAD_A.cnpj]: true,
-      [LEAD_B.cnpj]: true,
-      [LEAD_C.cnpj]: true,
-    }
+    const allSelected = new Set([LEAD_A.cnpj, LEAD_B.cnpj, LEAD_C.cnpj])
     const result = buildRecipients([LEAD_A, LEAD_B, LEAD_C], allSelected)
     expect(result).toHaveLength(3)
   })
@@ -120,7 +112,7 @@ describe('buildRecipients — recipient field mapping', () => {
       razaoSocial:  'Razão Social SA',
       nomeFantasia: 'Nome Fantasia',
     })
-    const result = buildRecipients([lead], { [lead.cnpj]: true })
+    const result = buildRecipients([lead], new Set([lead.cnpj]))
 
     expect(result[0].razao_social).toBe('Razão Social SA')
     expect(result[0].nome_fantasia).toBe('Nome Fantasia')
@@ -128,7 +120,7 @@ describe('buildRecipients — recipient field mapping', () => {
 
   it('omits nome_fantasia when nomeFantasia is empty string', () => {
     const lead = makeLead('55555555000155', { nomeFantasia: '' })
-    const result = buildRecipients([lead], { [lead.cnpj]: true })
+    const result = buildRecipients([lead], new Set([lead.cnpj]))
 
     expect(result[0].nome_fantasia).toBeUndefined()
   })
@@ -138,7 +130,7 @@ describe('buildRecipients — recipient field mapping', () => {
       telefone1: '11111111111',
       telefone2: '22222222222',
     })
-    const result = buildRecipients([lead], { [lead.cnpj]: true })
+    const result = buildRecipients([lead], new Set([lead.cnpj]))
     expect(result[0].telefone).toBe('11111111111')
   })
 
@@ -147,14 +139,15 @@ describe('buildRecipients — recipient field mapping', () => {
       telefone1: '',
       telefone2: '22222222222',
     })
-    const result = buildRecipients([lead], { [lead.cnpj]: true })
+    const result = buildRecipients([lead], new Set([lead.cnpj]))
     expect(result[0].telefone).toBe('22222222222')
   })
 
   it('sets uf and municipio from lead fields', () => {
     const lead = makeLead('88888888000128', { uf: 'AM', municipio: 'MANAUS' })
-    const result = buildRecipients([lead], { [lead.cnpj]: true })
+    const result = buildRecipients([lead], new Set([lead.cnpj]))
     expect(result[0].uf).toBe('AM')
     expect(result[0].municipio).toBe('MANAUS')
   })
 })
+

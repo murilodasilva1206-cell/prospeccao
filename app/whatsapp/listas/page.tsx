@@ -61,9 +61,9 @@ export interface CampaignRecipient {
 
 export function buildRecipients(
   leads: PublicEmpresa[],
-  selectedIds: Record<string, boolean>,
+  selectedIds: ReadonlySet<string>,
 ): CampaignRecipient[] {
-  const selected = leads.filter((l) => selectedIds[l.cnpj])
+  const selected = leads.filter((l) => selectedIds.has(l.cnpj))
   if (selected.length === 0) throw new Error('Selecione ao menos 1 lead.')
   return selected.map((r) => ({
     cnpj:          r.cnpj,
@@ -99,8 +99,8 @@ export default function ListasPage() {
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailError, setDetailError]     = useState<string | null>(null)
 
-  // Partial selection: cnpj → selected (true/false)
-  const [selectedLeadIds, setSelectedLeadIds] = useState<Record<string, boolean>>({})
+  // Partial selection: set of selected CNPJs
+  const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set())
 
   // Delete
   const [deletingId, setDeletingId] = useState<string | null>(null)
@@ -150,9 +150,7 @@ export default function ListasPage() {
       if (!res.ok) throw new Error(`Erro ${res.status}`)
       const data = await res.json() as { data: LeadPoolDetail }
       // Pre-select all leads on open
-      const allSelected: Record<string, boolean> = {}
-      ;(data.data.leads_json ?? []).forEach((l) => { allSelected[l.cnpj] = true })
-      setSelectedLeadIds(allSelected)
+      setSelectedLeadIds(new Set((data.data.leads_json ?? []).map((l) => l.cnpj)))
       setDetail(data.data)
     } catch (err) {
       setDetailError(err instanceof Error ? err.message : 'Erro ao carregar detalhes')
@@ -164,7 +162,7 @@ export default function ListasPage() {
   const closeDetail = useCallback(() => {
     setDetail(null)
     setDetailError(null)
-    setSelectedLeadIds({})
+    setSelectedLeadIds(new Set())
     setCampaignError(null)
   }, [])
 
@@ -217,7 +215,7 @@ export default function ListasPage() {
       setPendingCampaign({
         campaignId:        campaignData.data.id,
         confirmationToken: campaignData.confirmation_token,
-        recipients:        (detail.leads_json ?? []).filter((l) => selectedLeadIds[l.cnpj]),
+        recipients:        (detail.leads_json ?? []).filter((l) => selectedLeadIds.has(l.cnpj)),
       })
       closeDetail()
     } catch (err) {
@@ -233,17 +231,20 @@ export default function ListasPage() {
 
   const selectAll = useCallback(() => {
     if (!detail) return
-    const all: Record<string, boolean> = {}
-    ;(detail.leads_json ?? []).forEach((l) => { all[l.cnpj] = true })
-    setSelectedLeadIds(all)
+    setSelectedLeadIds(new Set((detail.leads_json ?? []).map((l) => l.cnpj)))
   }, [detail])
 
   const clearSelection = useCallback(() => {
-    setSelectedLeadIds({})
+    setSelectedLeadIds(new Set())
   }, [])
 
   const toggleLead = useCallback((cnpj: string) => {
-    setSelectedLeadIds((prev) => ({ ...prev, [cnpj]: !prev[cnpj] }))
+    setSelectedLeadIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(cnpj)) next.delete(cnpj)
+      else next.add(cnpj)
+      return next
+    })
   }, [])
 
   // ---------------------------------------------------------------------------
@@ -258,7 +259,7 @@ export default function ListasPage() {
   // ---------------------------------------------------------------------------
 
   const leads        = detail?.leads_json ?? []
-  const selectedCount = leads.filter((l) => selectedLeadIds[l.cnpj]).length
+  const selectedCount = leads.filter((l) => selectedLeadIds.has(l.cnpj)).length
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
@@ -459,7 +460,7 @@ export default function ListasPage() {
                       >
                         <input
                           type="checkbox"
-                          checked={!!selectedLeadIds[lead.cnpj]}
+                          checked={selectedLeadIds.has(lead.cnpj)}
                           onChange={() => toggleLead(lead.cnpj)}
                           className="size-4 shrink-0 rounded accent-emerald-600"
                         />
