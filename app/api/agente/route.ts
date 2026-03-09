@@ -290,8 +290,10 @@ export async function POST(request: NextRequest) {
           })
         }
 
-        // found — replace text name with numeric code for exact-match query
-        workingFilters = { ...workingFilters, municipio: munResult.codigo }
+        // found — replace text name with numeric code for exact-match query.
+        // Also force uf from the resolved result so the query uses the state-scoped
+        // index (municipio+uf) instead of a costly full-table municipio scan.
+        workingFilters = { ...workingFilters, municipio: munResult.codigo, uf: munResult.uf }
         log.debug({ municipio: filters.municipio, codigo: munResult.codigo, uf: munResult.uf }, 'Municipio resolvido')
       }
 

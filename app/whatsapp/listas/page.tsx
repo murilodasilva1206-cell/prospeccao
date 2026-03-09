@@ -7,6 +7,10 @@
 // state survives a hard refresh (F5). The floating AgentChat remains the
 // entry-point for creating new pools; this page handles the operational
 // side: browse, paginate, inspect leads, delete, and launch campaigns.
+//
+// Partial selection: opening the detail modal pre-selects all leads.
+// The user can then deselect individual leads or use "Selecionar todos" /
+// "Limpar seleção" before clicking "Criar Campanha".
 // ---------------------------------------------------------------------------
 
 import { useState, useEffect, useCallback } from 'react'
@@ -37,6 +41,42 @@ interface PendingCampaign {
 }
 
 // ---------------------------------------------------------------------------
+// Pure helper — exported for unit testing only.
+//
+// Filters the leads array down to the user-selected subset and maps each
+// entry to the shape expected by POST /api/campaigns `recipients`.
+// Throws (instead of silently sending zero recipients) when nothing is
+// selected, so the caller can surface a clear error to the user.
+// ---------------------------------------------------------------------------
+
+export interface CampaignRecipient {
+  cnpj: string
+  razao_social: string
+  nome_fantasia?: string
+  telefone?: string
+  email?: string
+  municipio?: string
+  uf?: string
+}
+
+export function buildRecipients(
+  leads: PublicEmpresa[],
+  selectedIds: Record<string, boolean>,
+): CampaignRecipient[] {
+  const selected = leads.filter((l) => selectedIds[l.cnpj])
+  if (selected.length === 0) throw new Error('Selecione ao menos 1 lead.')
+  return selected.map((r) => ({
+    cnpj:          r.cnpj,
+    razao_social:  r.razaoSocial,
+    nome_fantasia: r.nomeFantasia || undefined,
+    telefone:      r.telefone1 || r.telefone2 || undefined,
+    email:         r.email || undefined,
+    municipio:     r.municipio || undefined,
+    uf:            r.uf || undefined,
+  }))
+}
+
+// ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
@@ -59,13 +99,16 @@ export default function ListasPage() {
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailError, setDetailError]     = useState<string | null>(null)
 
+  // Partial selection: cnpj → selected (true/false)
+  const [selectedLeadIds, setSelectedLeadIds] = useState<Record<string, boolean>>({})
+
   // Delete
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
   // Campaign launch
-  const [pendingCampaign, setPendingCampaign]       = useState<PendingCampaign | null>(null)
-  const [campaignLoadingId, setCampaignLoadingId]   = useState<string | null>(null)
-  const [campaignError, setCampaignError]           = useState<string | null>(null)
+  const [pendingCampaign, setPendingCampaign]     = useState<PendingCampaign | null>(null)
+  const [campaignLoading, setCampaignLoading]     = useState(false)
+  const [campaignError, setCampaignError]         = useState<string | null>(null)
 
   // ---------------------------------------------------------------------------
   // Data fetching
@@ -101,10 +144,15 @@ export default function ListasPage() {
     setDetailLoading(true)
     setDetailError(null)
     setDetail(null)
+    setCampaignError(null)
     try {
       const res = await fetch(`/api/lead-pools/${poolId}`)
       if (!res.ok) throw new Error(`Erro ${res.status}`)
       const data = await res.json() as { data: LeadPoolDetail }
+      // Pre-select all leads on open
+      const allSelected: Record<string, boolean> = {}
+      ;(data.data.leads_json ?? []).forEach((l) => { allSelected[l.cnpj] = true })
+      setSelectedLeadIds(allSelected)
       setDetail(data.data)
     } catch (err) {
       setDetailError(err instanceof Error ? err.message : 'Erro ao carregar detalhes')
@@ -116,6 +164,8 @@ export default function ListasPage() {
   const closeDetail = useCallback(() => {
     setDetail(null)
     setDetailError(null)
+    setSelectedLeadIds({})
+    setCampaignError(null)
   }, [])
 
   // ---------------------------------------------------------------------------
@@ -138,33 +188,22 @@ export default function ListasPage() {
   }, [detail, fetchPools, offset, closeDetail])
 
   // ---------------------------------------------------------------------------
-  // Campaign launch
+  // Campaign launch (from detail modal with partial selection)
   // ---------------------------------------------------------------------------
 
-  const startCampaign = useCallback(async (pool: LeadPool) => {
-    setCampaignLoadingId(pool.id)
+  const startCampaignFromDetail = useCallback(async () => {
+    if (!detail) return
+    setCampaignLoading(true)
     setCampaignError(null)
     try {
-      const detailRes = await fetch(`/api/lead-pools/${pool.id}`)
-      if (!detailRes.ok) throw new Error(`Erro ${detailRes.status}`)
-      const detailData = await detailRes.json() as { data: LeadPoolDetail }
-      const leads = detailData.data.leads_json ?? []
-      if (leads.length === 0) throw new Error('Esta lista não tem leads.')
+      const recipients = buildRecipients(detail.leads_json ?? [], selectedLeadIds)
 
       const campaignRes = await fetch('/api/campaigns', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: `Campanha: ${pool.name.slice(0, 100)}`,
-          recipients: leads.map((r) => ({
-            cnpj:          r.cnpj,
-            razao_social:  r.razaoSocial,
-            nome_fantasia: r.nomeFantasia || undefined,
-            telefone:      r.telefone1 || r.telefone2 || undefined,
-            email:         r.email || undefined,
-            municipio:     r.municipio || undefined,
-            uf:            r.uf || undefined,
-          })),
+          name:       `Campanha: ${detail.name.slice(0, 100)}`,
+          recipients,
         }),
       })
       if (!campaignRes.ok) {
@@ -178,13 +217,33 @@ export default function ListasPage() {
       setPendingCampaign({
         campaignId:        campaignData.data.id,
         confirmationToken: campaignData.confirmation_token,
-        recipients:        leads,
+        recipients:        (detail.leads_json ?? []).filter((l) => selectedLeadIds[l.cnpj]),
       })
+      closeDetail()
     } catch (err) {
       setCampaignError(err instanceof Error ? err.message : 'Erro ao iniciar campanha')
     } finally {
-      setCampaignLoadingId(null)
+      setCampaignLoading(false)
     }
+  }, [detail, selectedLeadIds, closeDetail])
+
+  // ---------------------------------------------------------------------------
+  // Selection helpers
+  // ---------------------------------------------------------------------------
+
+  const selectAll = useCallback(() => {
+    if (!detail) return
+    const all: Record<string, boolean> = {}
+    ;(detail.leads_json ?? []).forEach((l) => { all[l.cnpj] = true })
+    setSelectedLeadIds(all)
+  }, [detail])
+
+  const clearSelection = useCallback(() => {
+    setSelectedLeadIds({})
+  }, [])
+
+  const toggleLead = useCallback((cnpj: string) => {
+    setSelectedLeadIds((prev) => ({ ...prev, [cnpj]: !prev[cnpj] }))
   }, [])
 
   // ---------------------------------------------------------------------------
@@ -197,6 +256,9 @@ export default function ListasPage() {
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
+
+  const leads        = detail?.leads_json ?? []
+  const selectedCount = leads.filter((l) => selectedLeadIds[l.cnpj]).length
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
@@ -226,9 +288,6 @@ export default function ListasPage() {
       {/* Error banners */}
       {error && (
         <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
-      )}
-      {campaignError && (
-        <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{campaignError}</div>
       )}
 
       {/* Table */}
@@ -275,21 +334,17 @@ export default function ListasPage() {
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-2">
                       <button
-                        onClick={() => void startCampaign(pool)}
-                        disabled={campaignLoadingId !== null || deletingId !== null}
-                        title="Iniciar campanha com esta lista"
+                        onClick={() => void openDetail(pool.id)}
+                        disabled={deletingId !== null}
+                        title="Selecionar leads e iniciar campanha"
                         className="flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
                       >
-                        {campaignLoadingId === pool.id ? (
-                          <Loader2 className="size-3.5 animate-spin" />
-                        ) : (
-                          <Users className="size-3.5" />
-                        )}
+                        <Users className="size-3.5" />
                         Campanha
                       </button>
                       <button
                         onClick={() => void deletePool(pool.id, pool.name)}
-                        disabled={deletingId !== null || campaignLoadingId !== null}
+                        disabled={deletingId !== null}
                         title="Excluir lista"
                         className="rounded-lg border border-slate-200 p-1.5 text-slate-400 hover:border-red-200 hover:bg-red-50 hover:text-red-500 disabled:opacity-40"
                       >
@@ -341,7 +396,8 @@ export default function ListasPage() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
           onClick={(e) => { if (e.target === e.currentTarget) closeDetail() }}
         >
-          <div className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-2xl bg-white shadow-2xl">
+          <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-2xl bg-white shadow-2xl">
+            {/* Modal header */}
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
               <h2 className="font-semibold text-slate-800">
                 {detail ? detail.name : 'Carregando...'}
@@ -353,6 +409,30 @@ export default function ListasPage() {
                 <X className="size-5" />
               </button>
             </div>
+
+            {/* Selection action bar (only when leads are loaded) */}
+            {detail && (
+              <div className="flex items-center gap-3 border-b border-slate-100 bg-slate-50 px-5 py-2.5">
+                <button
+                  onClick={selectAll}
+                  className="text-xs text-emerald-700 hover:underline"
+                >
+                  Selecionar todos
+                </button>
+                <span className="text-slate-300">·</span>
+                <button
+                  onClick={clearSelection}
+                  className="text-xs text-slate-500 hover:underline"
+                >
+                  Limpar seleção
+                </button>
+                <span className="ml-auto text-xs text-slate-500">
+                  Selecionados: <span className="font-medium text-slate-700">{selectedCount}</span> de {leads.length}
+                </span>
+              </div>
+            )}
+
+            {/* Modal body */}
             <div className="flex-1 overflow-y-auto px-5 py-4">
               {detailLoading && (
                 <div className="flex justify-center py-8">
@@ -372,28 +452,58 @@ export default function ListasPage() {
                     })}
                   </p>
                   <div className="space-y-1">
-                    {detail.leads_json.map((lead) => (
-                      <div
+                    {leads.map((lead) => (
+                      <label
                         key={lead.cnpj}
-                        className="flex items-center gap-3 rounded-lg border border-slate-100 px-3 py-2"
+                        className="flex cursor-pointer items-center gap-3 rounded-lg border border-slate-100 px-3 py-2 hover:bg-slate-50"
                       >
+                        <input
+                          type="checkbox"
+                          checked={!!selectedLeadIds[lead.cnpj]}
+                          onChange={() => toggleLead(lead.cnpj)}
+                          className="size-4 shrink-0 rounded accent-emerald-600"
+                        />
                         <Building2 className="size-4 shrink-0 text-slate-400" />
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium text-slate-800">
                             {lead.nomeFantasia || lead.razaoSocial}
                           </p>
                           <p className="truncate text-xs text-slate-500">
-                            {lead.municipio}/{lead.uf}
+                            {lead.cnpj}
+                            {lead.municipio ? ` · ${lead.municipio}/${lead.uf}` : ''}
                             {lead.telefone1 ? ` · ${lead.telefone1}` : ''}
                             {lead.email ? ` · ${lead.email}` : ''}
                           </p>
                         </div>
-                      </div>
+                      </label>
                     ))}
                   </div>
                 </>
               )}
             </div>
+
+            {/* Modal footer — campaign launch */}
+            {detail && (
+              <div className="border-t border-slate-200 px-5 py-4">
+                {campaignError && (
+                  <p className="mb-2 text-xs text-red-600">{campaignError}</p>
+                )}
+                <button
+                  onClick={() => void startCampaignFromDetail()}
+                  disabled={campaignLoading || selectedCount === 0}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
+                >
+                  {campaignLoading ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Users className="size-4" />
+                  )}
+                  {campaignLoading
+                    ? 'Criando campanha...'
+                    : `Criar Campanha com ${selectedCount} lead${selectedCount !== 1 ? 's' : ''}`}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

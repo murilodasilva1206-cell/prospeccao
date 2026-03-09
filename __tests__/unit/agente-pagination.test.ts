@@ -431,3 +431,77 @@ describe('/api/agente — broad-query guard (filter combinations)', () => {
     expect(body.action).toBe('search')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Municipio resolve — uf propagation
+// ---------------------------------------------------------------------------
+//
+// When the AI returns a municipality name (e.g. "Manaus") without a UF,
+// resolveMunicipio looks up the canonical code AND its state.  The route
+// must copy munResult.uf into workingFilters so the DB query uses the
+// state-scoped composite index (municipio + uf) rather than a full-table
+// municipio scan.
+//
+// Mock sequence for the search client:
+//   call 1 — resolveMunicipio SQL          → [{ codigo, nome, uf }]
+//   call 2 — buildCountQuery               → [{ total }]
+//   call 3 — buildContactsQuery (page 1)   → [row]
+// ---------------------------------------------------------------------------
+
+describe('/api/agente — municipio resolve propagates uf into workingFilters', () => {
+  it('sets filters.uf from resolved municipality when AI did not provide uf', async () => {
+    // AI returns municipio only (no uf) — simulates "clínicas em Manaus"
+    mockCallAiAgent.mockResolvedValue({
+      intent: {
+        action:     'search' as const,
+        filters:    { municipio: 'Manaus', cnae_principal: '9602-5/01', limit: 5 },
+        confidence: 0.9,
+      },
+      latencyMs:    8,
+      parseSuccess: true,
+    })
+    mockGetServedCnpjs.mockResolvedValue(new Set())
+
+    // DB call order: resolver → count → data page
+    mockClientQuery
+      .mockResolvedValueOnce({ rows: [{ codigo: '0213', nome: 'MANAUS', uf: 'AM' }] })  // resolveMunicipio
+      .mockResolvedValueOnce({ rows: [{ total: '1' }] })                                 // count
+      .mockResolvedValueOnce({ rows: [makeRow('001')] })                                 // page 1
+
+    const res = await POST(makeReq('5 clínicas de estética em Manaus'))
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.action).toBe('search')
+    // Resolved uf must appear in the returned filters
+    expect(body.filters.uf).toBe('AM')
+    expect(body.filters.municipio).toBe('0213')
+  })
+
+  it('does not overwrite an explicit uf already supplied by the AI', async () => {
+    // AI returns both municipio AND uf (already scoped)
+    mockCallAiAgent.mockResolvedValue({
+      intent: {
+        action:     'search' as const,
+        filters:    { municipio: 'Manaus', uf: 'AM', cnae_principal: '9602-5/01', limit: 5 },
+        confidence: 0.9,
+      },
+      latencyMs:    8,
+      parseSuccess: true,
+    })
+    mockGetServedCnpjs.mockResolvedValue(new Set())
+
+    // resolver is called with uf='AM' → returns single row
+    mockClientQuery
+      .mockResolvedValueOnce({ rows: [{ codigo: '0213', nome: 'MANAUS', uf: 'AM' }] })
+      .mockResolvedValueOnce({ rows: [{ total: '1' }] })
+      .mockResolvedValueOnce({ rows: [makeRow('002')] })
+
+    const res = await POST(makeReq('clínicas em Manaus AM'))
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.filters.uf).toBe('AM')
+    expect(body.filters.municipio).toBe('0213')
+  })
+})

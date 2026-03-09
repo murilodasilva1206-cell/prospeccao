@@ -213,6 +213,35 @@ describe('POST /api/agente', () => {
     expect(body.action).toBe('clarify')
   })
 
+  it('prompt com município Manaus retorna 200 e filters.uf === AM', async (ctx) => {
+    if (!dbAvailable) ctx.skip()
+    // Simulate AI returning municipio without uf (common real-world case)
+    server.use(
+      http.post('https://openrouter.ai/api/v1/chat/completions', () =>
+        HttpResponse.json({
+          choices: [{ message: { content: JSON.stringify({
+            action:     'search',
+            filters:    { municipio: 'Manaus', cnae_principal: '9602-5/01', limit: 5 },
+            confidence: 0.85,
+          }) } }],
+        }),
+      ),
+    )
+
+    const req = makeRequest({ message: '5 clínicas de estética em Manaus' }, '10.0.0.11')
+    const res = await POST(req)
+    const body = await res.json()
+
+    // Must not 500 — municipality resolution must succeed
+    expect(res.status).toBe(200)
+    expect(body.action).toBe('search')
+
+    // uf must be populated from the resolved municipality (AM) even though
+    // the AI did not supply it — this is the bug fixed in route.ts
+    expect(body.filters.uf).toBe('AM')
+    expect(typeof body.filters.municipio).toBe('string')
+  })
+
   it('handles OpenRouter returning invalid JSON gracefully (fallback)', async (ctx) => {
     // route.ts calls pool.connect() before requireWorkspaceAuth, so DB must be reachable
     if (!dbAvailable) ctx.skip()
