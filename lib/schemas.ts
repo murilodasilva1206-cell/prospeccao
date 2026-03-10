@@ -267,13 +267,40 @@ export const SendReactionSchema = z.object({
 export type SendReaction = z.infer<typeof SendReactionSchema>
 
 // ---------------------------------------------------------------------------
+// Language code validator — no regex to avoid detect-unsafe-regex lint rule.
+// Accepts ISO 639-1 codes (pt) and BCP-47 language+region tags (pt_BR, en_US).
+// Validation: part1 must be exactly 2 lowercase letters,
+//             part2 (optional) must be exactly 2 uppercase letters.
+// ---------------------------------------------------------------------------
+
+export const LanguageSchema = z
+  .string()
+  .min(2)
+  .max(20)
+  .refine((val) => {
+    const parts = val.split('_')
+    if (parts.length === 1) {
+      const p = parts[0]
+      return p.length === 2 && p === p.toLowerCase() && p >= 'a' && p <= 'zz'
+    }
+    if (parts.length === 2) {
+      const [lang, region] = parts
+      return (
+        lang.length === 2 && lang === lang.toLowerCase() &&
+        region.length === 2 && region === region.toUpperCase()
+      )
+    }
+    return false
+  }, 'Idioma invalido — use formato ISO 639 (ex: pt, pt_BR, en_US)')
+
+// ---------------------------------------------------------------------------
 // /api/whatsapp/channels/:id/send-template — Meta template messages
 // ---------------------------------------------------------------------------
 
 export const SendTemplateSchema = z.object({
   to: z.string().regex(/^\d{8,15}$/, 'Numero deve conter apenas digitos (8-15)'),
   name: SafeString(120),
-  language: z.string().regex(/^[a-z]{2}(?:_[A-Z]{2})$/, 'Idioma invalido (ex: pt_BR)'),
+  language: LanguageSchema,
   body_params: z.array(SafeString(250)).max(10).optional().default([]),
 })
 export type SendTemplate = z.infer<typeof SendTemplateSchema>
@@ -406,7 +433,7 @@ export type SelectChannel = z.infer<typeof SelectChannelSchema>
 const TemplateMessageContentSchema = z.object({
   type: z.literal('template'),
   name: SafeString(120),
-  language: z.string().regex(/^[a-z]{2}(?:_[A-Z]{2})$/, 'Idioma invalido (ex: pt_BR)'),
+  language: LanguageSchema,
   body_params: z.array(SafeString(250)).max(10).optional().default([]),
 })
 
@@ -468,3 +495,66 @@ export const RecipientPaginationSchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
   status: z.enum(['pending', 'processing', 'sent', 'failed', 'skipped']).optional(),
 })
+
+// ---------------------------------------------------------------------------
+// WhatsApp Templates (Meta Cloud API sync)
+// ---------------------------------------------------------------------------
+
+/** Template statuses returned by Meta Graph API */
+export const TEMPLATE_STATUSES = ['APPROVED', 'PENDING', 'REJECTED', 'PAUSED', 'DISABLED'] as const
+export type TemplateStatus = (typeof TEMPLATE_STATUSES)[number]
+
+/** Only APPROVED templates may be sent in campaigns or inbox */
+export const ALLOWED_TEMPLATE_SEND_STATUSES: readonly TemplateStatus[] = ['APPROVED']
+
+/** Single component in a Meta template (HEADER, BODY, FOOTER, BUTTONS) */
+export const MetaTemplateComponentSchema = z.object({
+  type: z.enum(['HEADER', 'BODY', 'FOOTER', 'BUTTONS']),
+  format: z.string().optional(),               // TEXT | IMAGE | VIDEO | DOCUMENT (for HEADER)
+  text: z.string().optional(),                 // present for TEXT components
+  buttons: z.array(z.record(z.string(), z.unknown())).optional(), // for BUTTONS
+  example: z.record(z.string(), z.unknown()).optional(),
+})
+export type MetaTemplateComponent = z.infer<typeof MetaTemplateComponentSchema>
+
+/** A single template item as returned by Meta Graph API */
+export const MetaTemplateItemSchema = z.object({
+  id: z.string(),
+  name: z.string().min(1),
+  language: z.string().min(2),
+  status: z.enum(TEMPLATE_STATUSES),
+  category: z.string().min(1),
+  components: z.array(MetaTemplateComponentSchema).default([]),
+})
+export type MetaTemplateItem = z.infer<typeof MetaTemplateItemSchema>
+
+/**
+ * Parameters for sending a template message (send-template endpoint + campaign set-message).
+ * Stricter than the internal TemplateMessageContentSchema:
+ *  - name: snake_case only (Meta template naming convention)
+ *  - language: BCP-47 style (e.g. pt_BR, en_US)
+ *  - body_params: up to 20 items, each max 1024 chars
+ */
+export const TemplateSendParamsSchema = z.object({
+  name: z
+    .string()
+    .min(1)
+    .max(512)
+    .refine(
+      (v) => v.split('').every((c) => (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c === '_'),
+      'Template name must be lowercase letters, digits, and underscores only',
+    ),
+  language: LanguageSchema,
+  body_params: z.array(z.string().max(1024)).max(20).default([]),
+})
+export type TemplateSendParams = z.infer<typeof TemplateSendParamsSchema>
+
+/** GET /api/whatsapp/channels/:id/templates — list/filter query params */
+export const ListTemplatesQuerySchema = z.object({
+  page:     z.coerce.number().int().min(1).default(1),
+  limit:    z.coerce.number().int().min(1).max(100).default(20),
+  status:   z.enum(TEMPLATE_STATUSES).optional(),
+  language: z.string().min(2).max(20).optional(),
+  search:   z.string().trim().max(100).optional(),
+})
+export type ListTemplatesQuery = z.infer<typeof ListTemplatesQuerySchema>

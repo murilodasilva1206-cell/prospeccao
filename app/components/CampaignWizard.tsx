@@ -32,6 +32,19 @@ interface Channel {
   phone_number: string | null
 }
 
+interface ApiTemplate {
+  id: string
+  template_name: string
+  language: string
+  status: string
+  variables_count: number
+}
+
+interface TemplateVariable {
+  index: number
+  component: string
+}
+
 interface Props {
   campaignId: string
   confirmationToken: string
@@ -88,11 +101,16 @@ export default function CampaignWizard({
   const [channelsLoading, setChannelsLoading] = useState(true)
   const [confirmed, setConfirmed] = useState(false)
 
-  // Step 2 state
+  // Step 2 state — text (non-Meta) channels
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(FIRST_CONTACT_TEMPLATES[0].id)
   const [customBody, setCustomBody] = useState(FIRST_CONTACT_TEMPLATES[0].body)
-  const [templateName, setTemplateName] = useState('')
-  const [templateLang, setTemplateLang] = useState('pt_BR')
+
+  // Step 2 state — Meta Cloud API templates (from API catalog)
+  const [apiTemplates, setApiTemplates] = useState<ApiTemplate[]>([])
+  const [apiTemplatesLoading, setApiTemplatesLoading] = useState(false)
+  const [selectedApiTemplateId, setSelectedApiTemplateId] = useState<string>('')
+  const [templateVariables, setTemplateVariables] = useState<TemplateVariable[]>([])
+  const [templateBodyParams, setTemplateBodyParams] = useState<string[]>([])
 
   // Step 3 — automation config
   const [delayMinutes, setDelayMinutes] = useState(2)
@@ -138,6 +156,47 @@ export default function CampaignWizard({
     if (tmpl) setCustomBody(tmpl.body)
   }, [selectedTemplateId])
 
+  // Load APPROVED templates when a META_CLOUD channel is selected
+  useEffect(() => {
+    if (!selectedChannelId || !isMetaCloud) {
+      setApiTemplates([])
+      setSelectedApiTemplateId('')
+      setTemplateVariables([])
+      setTemplateBodyParams([])
+      return
+    }
+    setApiTemplatesLoading(true)
+    fetch(`/api/whatsapp/channels/${selectedChannelId}/templates?status=APPROVED&limit=100`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((d: { data?: ApiTemplate[] }) => {
+        const list = d.data ?? []
+        setApiTemplates(list)
+        if (list.length > 0) setSelectedApiTemplateId(list[0].id)
+      })
+      .catch(() => setApiTemplates([]))
+      .finally(() => setApiTemplatesLoading(false))
+  }, [selectedChannelId, isMetaCloud])
+
+  // Load variable list when selected API template changes
+  useEffect(() => {
+    if (!selectedChannelId || !selectedApiTemplateId) {
+      setTemplateVariables([])
+      setTemplateBodyParams([])
+      return
+    }
+    fetch(`/api/whatsapp/channels/${selectedChannelId}/templates/${selectedApiTemplateId}/variables`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((d: { variables?: TemplateVariable[] }) => {
+        const vars = (d.variables ?? []).filter((v) => v.component === 'BODY')
+        setTemplateVariables(vars)
+        setTemplateBodyParams(Array(vars.length).fill(''))
+      })
+      .catch(() => {
+        setTemplateVariables([])
+        setTemplateBodyParams([])
+      })
+  }, [selectedChannelId, selectedApiTemplateId])
+
   // ---------------------------------------------------------------------------
   // Step transitions
   // ---------------------------------------------------------------------------
@@ -170,14 +229,17 @@ export default function CampaignWizard({
     setError(null)
     try {
       if (isMetaCloud) {
-        if (!templateName.trim()) throw new Error('Nome do template obrigatorio')
+        const selected = apiTemplates.find((t) => t.id === selectedApiTemplateId)
+        if (!selected) throw new Error('Selecione um template aprovado')
         await apiPost(`/api/campaigns/${campaignId}/set-message`, {
           message_type: 'template',
           message_content: {
             type: 'template',
-            name: templateName.trim(),
-            language: templateLang,
-            body_params: [],
+            name: selected.template_name,
+            language: selected.language,
+            body_params: templateBodyParams.filter((p) => p.trim()).length > 0
+              ? templateBodyParams
+              : [],
           },
         })
       } else {
@@ -193,10 +255,10 @@ export default function CampaignWizard({
     } finally {
       setLoading(false)
     }
-  }, [selectedChannel, isMetaCloud, templateName, templateLang, customBody, campaignId])
+  }, [selectedChannel, isMetaCloud, apiTemplates, selectedApiTemplateId, templateBodyParams, customBody, campaignId])
 
   // Close the wizard.
-  // Pre-start (steps 1–3): cancel the campaign so it doesn't sit in a setup state.
+  // Pre-start (steps 1-3): cancel the campaign so it doesn't sit in a setup state.
   // Post-start (progress panel visible): just close — automation keeps running.
   // Explicit campaign cancellation is done via the "Cancelar" button in the progress panel.
   const handleClose = useCallback(async () => {
@@ -358,27 +420,59 @@ export default function CampaignWizard({
             </p>
             {isMetaCloud ? (
               <div className="space-y-3">
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-zinc-700">Nome do template</label>
-                  <input
-                    value={templateName}
-                    onChange={(e) => setTemplateName(e.target.value)}
-                    placeholder="ex: primeiro_contato_v1"
-                    className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-zinc-700">Idioma</label>
-                  <select
-                    value={templateLang}
-                    onChange={(e) => setTemplateLang(e.target.value)}
-                    className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-emerald-400"
-                  >
-                    <option value="pt_BR">pt_BR — Portugues (Brasil)</option>
-                    <option value="en_US">en_US — English (US)</option>
-                    <option value="es_AR">es_AR — Espanol (Argentina)</option>
-                  </select>
-                </div>
+                {apiTemplatesLoading ? (
+                  <div className="flex items-center justify-center py-6">
+                    <Loader2 className="size-5 animate-spin text-zinc-400" />
+                  </div>
+                ) : apiTemplates.length === 0 ? (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    Nenhum template aprovado neste canal.{' '}
+                    <a href="/whatsapp/canais" className="underline">
+                      Sincronize os templates
+                    </a>{' '}
+                    e volte aqui.
+                  </div>
+                ) : (
+                  <>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-zinc-700">Template</label>
+                      <select
+                        value={selectedApiTemplateId}
+                        onChange={(e) => setSelectedApiTemplateId(e.target.value)}
+                        className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-emerald-400"
+                      >
+                        {apiTemplates.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.template_name} ({t.language})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {templateVariables.length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-xs font-medium text-zinc-700">
+                          Variaveis do template ({templateVariables.length})
+                        </p>
+                        {templateVariables.map((v, i) => (
+                          <div key={v.index}>
+                            <label className="mb-0.5 block text-xs text-zinc-500">
+                              {`{{${v.index}}}`} - {v.component}
+                            </label>
+                            <input
+                              value={templateBodyParams.at(i) ?? ''}
+                              onChange={(e) => {
+                                const val = e.target.value
+                                setTemplateBodyParams((prev) => prev.map((p, j) => (j === i ? val : p)))
+                              }}
+                              placeholder={`Valor para {{${v.index}}}`}
+                              className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             ) : (
               <div className="space-y-3">

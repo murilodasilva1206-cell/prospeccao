@@ -243,6 +243,13 @@ export const whatsappKeysLimiter = createRateLimiter({
   maxRequests: 5, // 5 key operations / minute / IP
 })
 
+export const whatsappTemplateSyncLimiter = createRateLimiter({
+  name: 'whatsapp-template-sync',
+  uniqueTokenPerInterval: 100,
+  interval: 60_000,
+  maxRequests: 5, // 5 syncs / minute / IP (heavy external call)
+})
+
 // ---------------------------------------------------------------------------
 // Campaign limiters
 // ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 'use client'
 
-import { useCallback, useRef, useState } from 'react'
-import { Mic, Paperclip, Send, FileText, Square } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Loader2, Mic, Paperclip, Send, FileText, Square } from 'lucide-react'
 
 interface MessageComposerProps {
   conversationId: string | null
@@ -11,10 +11,12 @@ interface MessageComposerProps {
   onMessageSent: () => void
 }
 
-const DEFAULT_META_TEMPLATES = [
-  { name: 'followup_1', language: 'pt_BR', label: 'Follow-up 1' },
-  { name: 'qualificacao_inicial', language: 'pt_BR', label: 'Qualificacao inicial' },
-]
+interface ApiTemplate {
+  id: string
+  template_name: string
+  language: string
+  status: string
+}
 
 export function MessageComposer({
   conversationId,
@@ -28,11 +30,27 @@ export function MessageComposer({
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [recording, setRecording] = useState(false)
   const [templateMenuOpen, setTemplateMenuOpen] = useState(false)
+  const [apiTemplates, setApiTemplates] = useState<ApiTemplate[]>([])
+  const [templatesLoading, setTemplatesLoading] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const streamRef = useRef<MediaStream | null>(null)
+
+  // Load APPROVED templates whenever the META_CLOUD channel changes
+  useEffect(() => {
+    if (channelProvider !== 'META_CLOUD' || !channelId) {
+      setApiTemplates([])
+      return
+    }
+    setTemplatesLoading(true)
+    fetch(`/api/whatsapp/channels/${channelId}/templates?status=APPROVED&limit=100`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((d: { data?: ApiTemplate[] }) => setApiTemplates(d.data ?? []))
+      .catch(() => setApiTemplates([]))
+      .finally(() => setTemplatesLoading(false))
+  }, [channelId, channelProvider])
 
   const sendMediaFile = useCallback(
     async (file: File) => {
@@ -239,17 +257,31 @@ export function MessageComposer({
           </button>
 
           {templateMenuOpen && templateEnabled && (
-            <div className="absolute bottom-11 left-0 z-20 w-56 rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
-              <p className="px-2 pb-1 text-xs font-medium text-gray-500">Templates Meta</p>
-              {DEFAULT_META_TEMPLATES.map((template) => (
-                <button
-                  key={template.name}
-                  onClick={() => void handleSendTemplate(template.name, template.language)}
-                  className="w-full rounded px-2 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-                >
-                  {template.label}
-                </button>
-              ))}
+            <div className="absolute bottom-11 left-0 z-20 w-64 rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
+              <p className="px-2 pb-1 text-xs font-medium text-gray-500">Templates aprovados</p>
+              {templatesLoading ? (
+                <div className="flex items-center justify-center py-3">
+                  <Loader2 className="size-4 animate-spin text-gray-400" />
+                </div>
+              ) : apiTemplates.length === 0 ? (
+                <div className="px-2 py-2 text-xs text-gray-500">
+                  Nenhum template aprovado.{' '}
+                  <a href="/whatsapp/canais" className="text-green-600 underline">
+                    Sincronize templates
+                  </a>
+                </div>
+              ) : (
+                apiTemplates.map((tpl) => (
+                  <button
+                    key={tpl.id}
+                    onClick={() => void handleSendTemplate(tpl.template_name, tpl.language)}
+                    className="w-full rounded px-2 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    <span className="font-medium">{tpl.template_name}</span>
+                    <span className="ml-1 text-xs text-gray-400">{tpl.language}</span>
+                  </button>
+                ))
+              )}
             </div>
           )}
         </div>

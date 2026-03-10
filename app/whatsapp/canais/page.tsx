@@ -193,6 +193,7 @@ export default function WhatsAppChannelsPage() {
 
   const [accessToken, setAccessToken] = useState("")
   const [phoneNumberId, setPhoneNumberId] = useState("")
+  const [wabaId, setWabaId] = useState("")
   const [appSecret, setAppSecret] = useState("")
   const [instanceUrl, setInstanceUrl] = useState("")
   const [apiKey, setApiKey] = useState("")
@@ -220,6 +221,7 @@ export default function WhatsAppChannelsPage() {
   const [editInstanceUrl, setEditInstanceUrl] = useState("")
   const [editAccessToken, setEditAccessToken] = useState("")
   const [editPhoneNumberId, setEditPhoneNumberId] = useState("")
+  const [editWabaId, setEditWabaId] = useState("")
   const [editAdminToken, setEditAdminToken] = useState("")
   const [editInstanceToken, setEditInstanceToken] = useState("")
   const [editApiKey, setEditApiKey] = useState("")
@@ -257,6 +259,7 @@ export default function WhatsAppChannelsPage() {
   function clearProviderFields() {
     setAccessToken("")
     setPhoneNumberId("")
+    setWabaId("")
     setAppSecret("")
     setInstanceUrl("")
     setApiKey("")
@@ -275,7 +278,8 @@ export default function WhatsAppChannelsPage() {
         ? {
             access_token: accessToken.trim(),
             phone_number_id: phoneNumberId.trim(),
-            app_secret: appSecret.trim(),
+            waba_id: wabaId.trim() || undefined,
+            app_secret: appSecret.trim() || undefined,
           }
         : provider === "UAZAPI"
         ? {
@@ -417,6 +421,7 @@ export default function WhatsAppChannelsPage() {
     setEditInstanceUrl("")
     setEditAccessToken("")
     setEditPhoneNumberId("")
+    setEditWabaId("")
     setEditAdminToken("")
     setEditInstanceToken("")
     setEditApiKey("")
@@ -435,6 +440,7 @@ export default function WhatsAppChannelsPage() {
     if (editChannel.provider === "META_CLOUD") {
       if (editAccessToken.trim()) rawCreds.access_token = editAccessToken.trim()
       if (editPhoneNumberId.trim()) rawCreds.phone_number_id = editPhoneNumberId.trim()
+      if (editWabaId.trim()) rawCreds.waba_id = editWabaId.trim()
       if (editAppSecret.trim()) rawCreds.app_secret = editAppSecret.trim()
     } else if (editChannel.provider === "UAZAPI") {
       if (editInstanceUrl.trim()) rawCreds.instance_url = editInstanceUrl.trim()
@@ -609,6 +615,19 @@ export default function WhatsAppChannelsPage() {
                         value={phoneNumberId}
                         onChange={(e) => setPhoneNumberId(e.target.value)}
                         placeholder="123456789"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-zinc-700">
+                        WABA ID{" "}
+                        <span className="font-normal text-zinc-500">
+                          (obrigatorio para sincronizar templates)
+                        </span>
+                      </label>
+                      <Input
+                        value={wabaId}
+                        onChange={(e) => setWabaId(e.target.value)}
+                        placeholder="WhatsApp Business Account ID"
                       />
                     </div>
                     <div className="space-y-2">
@@ -968,6 +987,17 @@ export default function WhatsAppChannelsPage() {
                     <Input
                       value={editPhoneNumberId}
                       onChange={(e) => setEditPhoneNumberId(e.target.value)}
+                      placeholder="preencha para alterar"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-zinc-700">
+                      WABA ID{" "}
+                      <span className="font-normal text-zinc-500">(para sincronizar templates)</span>
+                    </label>
+                    <Input
+                      value={editWabaId}
+                      onChange={(e) => setEditWabaId(e.target.value)}
                       placeholder="preencha para alterar"
                     />
                   </div>

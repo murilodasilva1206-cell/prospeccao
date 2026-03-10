@@ -15,6 +15,8 @@ import { safeCompare } from '../crypto'
 import { RetryableError, CredentialValidationError } from '../errors'
 import type { IWhatsAppAdapter, ConnectResult, SendResult, DownloadResult } from './interface'
 import type { Channel, ChannelCredentials, ChannelStatus, WhatsAppEvent } from '../types'
+import type { MetaTemplateItem } from '../../schemas'
+import { MetaTemplateItemSchema } from '../../schemas'
 
 const GRAPH_API_VERSION = 'v18.0'
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`
@@ -398,5 +400,55 @@ export class MetaAdapter implements IWhatsAppAdapter {
         payload: { raw: rawPayload },
       }
     )
+  }
+
+  /**
+   * Fetches all message templates from the Meta Graph API for a WABA account.
+   * Follows paging cursors to collect all pages.
+   * Throws RetryableError on 429/5xx; plain Error on 4xx.
+   */
+  async syncTemplates(
+    _channel: Channel,
+    creds: ChannelCredentials,
+  ): Promise<MetaTemplateItem[]> {
+    if (!creds.access_token) throw new Error('Meta adapter requer access_token para syncTemplates')
+    if (!creds.waba_id) throw new Error('Meta adapter requer waba_id para syncTemplates (configure o WABA ID nas credenciais do canal)')
+
+    const allTemplates: MetaTemplateItem[] = []
+    const fields = 'name,language,status,category,components'
+    let nextUrl: string | null =
+      `${GRAPH_BASE}/${creds.waba_id}/message_templates?fields=${fields}&limit=100`
+
+    while (nextUrl) {
+      const res = await fetch(nextUrl, {
+        headers: { Authorization: `Bearer ${creds.access_token}` },
+      })
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        if (res.status === 429 || res.status >= 500) {
+          throw new RetryableError(`Meta syncTemplates falhou (${res.status}): ${body}`)
+        }
+        throw new Error(`Meta syncTemplates falhou (${res.status}): ${body}`)
+      }
+
+      const data = (await res.json()) as {
+        data?: unknown[]
+        paging?: { next?: string }
+      }
+
+      const page = data.data ?? []
+      for (const item of page) {
+        const parsed = MetaTemplateItemSchema.safeParse(item)
+        if (parsed.success) {
+          allTemplates.push(parsed.data)
+        }
+        // Invalid items are silently skipped — prefer resilience over strict failure
+      }
+
+      nextUrl = data.paging?.next ?? null
+    }
+
+    return allTemplates
   }
 }
