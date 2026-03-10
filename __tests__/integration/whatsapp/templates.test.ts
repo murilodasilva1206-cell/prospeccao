@@ -7,7 +7,7 @@ import pool from '@/lib/database'
 import { POST as syncRoute } from '@/app/api/whatsapp/channels/[id]/templates/sync/route'
 import { GET as listRoute } from '@/app/api/whatsapp/channels/[id]/templates/route'
 import { GET as variablesRoute } from '@/app/api/whatsapp/channels/[id]/templates/[templateId]/variables/route'
-import { encrypt } from '@/lib/whatsapp/crypto'
+import { encryptCredentials } from '@/lib/whatsapp/crypto'
 
 // ---------------------------------------------------------------------------
 // Integration: WhatsApp template sync, list, and variable extraction.
@@ -142,7 +142,7 @@ beforeAll(async () => {
 
       // Encrypt fake Meta credentials with waba_id
       const metaCreds = { access_token: 'EAABtest', phone_number_id: '109876543210', waba_id: WABA_ID }
-      const encryptedMeta = encrypt(JSON.stringify(metaCreds))
+      const encryptedMeta = encryptCredentials(metaCreds)
 
       // Create META_CLOUD channel for TEST_WORKSPACE
       const metaCh = await client.query<{ id: string }>(
@@ -154,7 +154,7 @@ beforeAll(async () => {
 
       // Create EVOLUTION channel (for non-META_CLOUD rejection test)
       const evolCreds = { instance_url: 'https://evolution.test', api_key: 'evo_key' }
-      const encryptedEvol = encrypt(JSON.stringify(evolCreds))
+      const encryptedEvol = encryptCredentials(evolCreds)
       const evolCh = await client.query<{ id: string }>(
         `INSERT INTO whatsapp_channels (workspace_id, name, provider, credentials_encrypted, webhook_secret, status)
          VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
