@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { Bot } from 'lucide-react'
 import type { ConversationItem } from '../hooks/useConversations'
 
 interface ConversationListProps {
@@ -74,11 +75,23 @@ export function ConversationList({ conversations, selectedId, onSelect, loading 
                     {conv.contact_name ?? conv.contact_phone}
                   </span>
                   {conv.ai_enabled && (
-                    <span className="text-xs text-purple-500" title="IA ativada">🤖</span>
+                    <Bot className="size-3 text-purple-500 shrink-0" aria-label="IA ativada" />
                   )}
                 </div>
                 <p className="text-xs text-gray-500 truncate mt-0.5">
                   {conv.contact_phone}
+                </p>
+                <p className="text-xs text-gray-400 truncate mt-0.5">
+                  {conv.channel_name ?? 'Canal não identificado'}
+                  {conv.channel_provider && (
+                    <span className={`ml-1 rounded px-1 text-[10px] font-medium ${
+                      conv.channel_provider === 'META_CLOUD' ? 'bg-blue-50 text-blue-600' :
+                      conv.channel_provider === 'EVOLUTION' ? 'bg-emerald-50 text-emerald-600' :
+                      'bg-orange-50 text-orange-600'
+                    }`}>
+                      {conv.channel_provider === 'META_CLOUD' ? 'Meta' : conv.channel_provider}
+                    </span>
+                  )}
                 </p>
               </div>
               <div className="flex flex-col items-end gap-1 shrink-0">

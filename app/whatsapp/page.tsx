@@ -1,4 +1,4 @@
-import { MessageCircle, KeyRound, Inbox, ArrowRight } from "lucide-react"
+import { MessageCircle, KeyRound, Inbox, FileText, ArrowRight } from "lucide-react"
 
 const links = [
   {
@@ -22,6 +22,13 @@ const links = [
     icon: Inbox,
     tone: "amber",
   },
+  {
+    href: "/whatsapp/templates",
+    title: "Templates",
+    description: "Sincronize e gerencie templates oficiais da Meta.",
+    icon: FileText,
+    tone: "violet",
+  },
 ] as const
 
 function toneStyles(tone: (typeof links)[number]["tone"]) {
@@ -32,6 +39,8 @@ function toneStyles(tone: (typeof links)[number]["tone"]) {
       return "border-sky-200 bg-sky-50 text-sky-900"
     case "amber":
       return "border-amber-200 bg-amber-50 text-amber-900"
+    case "violet":
+      return "border-violet-200 bg-violet-50 text-violet-900"
     default:
       return "border-zinc-200 bg-white text-zinc-900"
   }

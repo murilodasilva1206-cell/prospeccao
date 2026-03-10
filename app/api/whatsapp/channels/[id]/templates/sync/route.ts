@@ -17,6 +17,7 @@ import { decryptCredentials } from '@/lib/whatsapp/crypto'
 import { MetaAdapter } from '@/lib/whatsapp/adapters/meta'
 import { syncTemplatesInTransaction } from '@/lib/whatsapp/template-repo'
 import { ChannelIdSchema } from '@/lib/whatsapp/route-params'
+import { RetryableError } from '@/lib/whatsapp/errors'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -57,7 +58,19 @@ export async function POST(request: NextRequest, { params }: Params) {
       const creds = decryptCredentials(channel.credentials_encrypted)
       if (!creds.waba_id) {
         return NextResponse.json(
-          { error: 'Canal nao possui waba_id configurado — atualize as credenciais do canal' },
+          { error: 'Canal nao possui waba_id configurado -- atualize as credenciais do canal' },
+          { status: 422 },
+        )
+      }
+      if (!creds.access_token) {
+        return NextResponse.json(
+          { error: 'Canal nao possui access_token configurado -- atualize as credenciais do canal' },
+          { status: 422 },
+        )
+      }
+      if (!creds.phone_number_id) {
+        return NextResponse.json(
+          { error: 'Canal nao possui phone_number_id configurado -- atualize as credenciais do canal' },
           { status: 422 },
         )
       }
@@ -81,7 +94,11 @@ export async function POST(request: NextRequest, { params }: Params) {
   } catch (err) {
     const res = authErrorResponse(err)
     if (res) return res
+    if (err instanceof RetryableError) {
+      log.error({ err }, 'Meta indisponivel (RetryableError)')
+      return NextResponse.json({ error: 'Meta indisponivel no momento. Tente novamente.' }, { status: 503 })
+    }
     log.error({ err }, 'Erro ao sincronizar templates')
-    return NextResponse.json({ error: 'Erro interno do servidor' }, { status: 500 })
+    return NextResponse.json({ error: 'Erro interno ao sincronizar. Verifique as credenciais e tente novamente.' }, { status: 500 })
   }
 }

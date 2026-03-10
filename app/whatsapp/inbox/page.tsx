@@ -14,6 +14,14 @@ import { useConversations } from './hooks/useConversations'
 import { useMessages } from './hooks/useMessages'
 import type { ConversationItem } from './hooks/useConversations'
 
+function conversationStatusLabel(status: 'open' | 'resolved' | 'ai_handled') {
+  switch (status) {
+    case 'open': return 'Aberta'
+    case 'resolved': return 'Resolvida'
+    case 'ai_handled': return 'Atendida pela IA'
+  }
+}
+
 function ContactCockpit({ conversation }: { conversation: ConversationItem | null }) {
   if (!conversation) {
     return (
@@ -47,18 +55,18 @@ function ContactCockpit({ conversation }: { conversation: ConversationItem | nul
         <h3 className="mb-3 text-sm font-semibold text-slate-800">Detalhes do contato</h3>
         <div className="space-y-2 text-xs text-slate-600">
           <p className="flex items-center gap-2"><Phone className="size-3.5" /> {conversation.contact_phone}</p>
-          <p>E-mail: N/D</p>
-          <p>Endereco: N/D</p>
+          <p>E-mail: não informado</p>
+          <p>Endereço: não informado</p>
           <p>Nome do canal: {conversation.channel_name ?? '-'}</p>
           <p>Provedor: {conversation.channel_provider ?? '-'}</p>
         </div>
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h3 className="mb-3 text-sm font-semibold text-slate-800">Contexto de prospeccao</h3>
+        <h3 className="mb-3 text-sm font-semibold text-slate-800">Contexto de prospecção</h3>
         <div className="space-y-2 text-xs text-slate-700">
-          <p>Mensagens nao lidas: {conversation.unread_count}</p>
-          <p>Status da conversa: {conversation.status}</p>
+          <p>Mensagens não lidas: {conversation.unread_count}</p>
+          <p>Status da conversa: {conversationStatusLabel(conversation.status)}</p>
           <p>IA no contato: {conversation.ai_enabled ? 'Ativada' : 'Desativada'}</p>
         </div>
       </section>
@@ -101,13 +109,13 @@ function InsightsPanel({
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h3 className="mb-3 text-sm font-semibold text-slate-800">Proxima melhor acao</h3>
+        <h3 className="mb-3 text-sm font-semibold text-slate-800">Próxima melhor ação</h3>
         <div className="space-y-2 text-xs text-slate-700">
           <button className="flex w-full items-center justify-between rounded-md border border-slate-200 px-3 py-2 hover:bg-slate-50">
             Enviar template de follow-up <ChevronRight className="size-3.5" />
           </button>
           <button className="flex w-full items-center justify-between rounded-md border border-slate-200 px-3 py-2 hover:bg-slate-50">
-            Solicitar audio de qualificacao <ChevronRight className="size-3.5" />
+            Solicitar áudio de qualificação <ChevronRight className="size-3.5" />
           </button>
           <button className="flex w-full items-center justify-between rounded-md border border-slate-200 px-3 py-2 hover:bg-slate-50">
             Converter em oportunidade <ChevronRight className="size-3.5" />
@@ -116,10 +124,10 @@ function InsightsPanel({
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h3 className="mb-2 text-sm font-semibold text-slate-800">Resumo rapido</h3>
+        <h3 className="mb-2 text-sm font-semibold text-slate-800">Resumo rápido</h3>
         <p className="text-xs text-slate-600">
-          Conversa em andamento para prospeccao outbound. Use mensagens curtas, CTA claro
-          e registro de proximo passo.
+          Conversa em andamento para prospecção outbound. Use mensagens curtas, CTA claro
+          e registro de próximo passo.
         </p>
       </section>
     </div>
@@ -141,10 +149,10 @@ export default function InboxPage() {
       <div className="mb-3 flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
         <div>
           <p className="text-base font-semibold text-slate-900">Inbox OmniChannel</p>
-          <p className="text-xs text-slate-500">Layout operacional de prospeccao multicanal</p>
+          <p className="text-xs text-slate-500">Layout operacional de prospecção multicanal</p>
         </div>
         <div className="hidden items-center gap-2 text-xs text-slate-600 md:flex">
-          <a href="/whatsapp" className="rounded border border-slate-200 px-2 py-1 hover:bg-slate-50">Modulo</a>
+          <a href="/whatsapp" className="rounded border border-slate-200 px-2 py-1 hover:bg-slate-50">Módulo</a>
           <a href="/whatsapp/canais" className="rounded border border-slate-200 px-2 py-1 hover:bg-slate-50">Canais</a>
           <a href="/whatsapp/chaves" className="rounded border border-slate-200 px-2 py-1 hover:bg-slate-50">Chaves</a>
         </div>

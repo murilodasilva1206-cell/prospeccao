@@ -427,7 +427,7 @@ export default function CampaignWizard({
                 ) : apiTemplates.length === 0 ? (
                   <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                     Nenhum template aprovado neste canal.{' '}
-                    <a href="/whatsapp/canais" className="underline">
+                    <a href="/whatsapp/templates" className="underline">
                       Sincronize os templates
                     </a>{' '}
                     e volte aqui.
