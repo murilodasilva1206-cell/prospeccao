@@ -16,6 +16,10 @@ export interface FindConversationsOptions {
   limit?: number
   offset?: number
   status?: 'open' | 'resolved' | 'ai_handled'
+  provider?: 'META_CLOUD' | 'EVOLUTION' | 'UAZAPI'
+  channel_id?: string
+  date_from?: Date
+  date_to?: Date
 }
 
 /**
@@ -57,13 +61,36 @@ export async function findConversationsByWorkspace(
   const limit = options.limit ?? 20
   const offset = options.offset ?? 0
 
+  // $1 = workspace_id; $2 = limit; $3 = offset; $4..N = dynamic filters
   const params: unknown[] = [workspace_id, limit, offset]
-  let statusClause = ''
+  const clauses: string[] = []
 
   if (options.status) {
     params.push(options.status)
-    statusClause = `AND c.status = $${params.length}`
+    clauses.push(`AND c.status = $${params.length}`)
   }
+
+  if (options.provider) {
+    params.push(options.provider)
+    clauses.push(`AND wc.provider = $${params.length}`)
+  }
+
+  if (options.channel_id) {
+    params.push(options.channel_id)
+    clauses.push(`AND c.channel_id = $${params.length}`)
+  }
+
+  if (options.date_from) {
+    params.push(options.date_from)
+    clauses.push(`AND c.last_message_at >= $${params.length}`)
+  }
+
+  if (options.date_to) {
+    params.push(options.date_to)
+    clauses.push(`AND c.last_message_at <= $${params.length}`)
+  }
+
+  const filterSQL = clauses.join('\n     ')
 
   const result = await client.query<Conversation>(
     `SELECT c.id, c.channel_id, wc.name AS channel_name, wc.provider AS channel_provider,
@@ -72,7 +99,7 @@ export async function findConversationsByWorkspace(
             c.created_at, c.updated_at
      FROM conversations c
      INNER JOIN whatsapp_channels wc ON wc.id = c.channel_id
-     WHERE c.workspace_id = $1 ${statusClause}
+     WHERE c.workspace_id = $1 ${filterSQL}
      ORDER BY c.last_message_at DESC NULLS LAST
      LIMIT $2 OFFSET $3`,
     params,

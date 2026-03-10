@@ -21,17 +21,41 @@ export interface ConversationItem {
 interface UseConversationsOptions {
   pollInterval?: number
   status?: string
+  provider?: string
+  channel_id?: string
+  date_from?: string
+  date_to?: string
+  preset?: string
+  offset?: number
 }
 
-export function useConversations({ pollInterval = 5000, status }: UseConversationsOptions = {}) {
+export function useConversations({
+  pollInterval = 5000,
+  status,
+  provider,
+  channel_id,
+  date_from,
+  date_to,
+  preset,
+  offset,
+}: UseConversationsOptions = {}) {
   const [conversations, setConversations] = useState<ConversationItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const fetchConversations = useCallback(async () => {
+  async function doFetch() {
     try {
-      const params = new URLSearchParams({ limit: '50' })
+      const params = new URLSearchParams()
+      params.set('limit', '50')
       if (status) params.set('status', status)
+      if (provider) params.set('provider', provider)
+      if (channel_id) params.set('channel_id', channel_id)
+      if (offset !== undefined) params.set('offset', String(offset))
+      if (preset) params.set('preset', preset)
+      else {
+        if (date_from) params.set('date_from', date_from)
+        if (date_to) params.set('date_to', date_to)
+      }
 
       const res = await fetch(`/api/whatsapp/conversations?${params}`)
 
@@ -48,7 +72,9 @@ export function useConversations({ pollInterval = 5000, status }: UseConversatio
     } finally {
       setLoading(false)
     }
-  }, [status])
+  }
+
+  const fetchConversations = useCallback(doFetch, [status, provider, channel_id, date_from, date_to, preset, offset])
 
   useEffect(() => {
     fetchConversations()

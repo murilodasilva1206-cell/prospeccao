@@ -9,6 +9,7 @@ interface ConversationListProps {
   selectedId: string | null
   onSelect: (id: string) => void
   loading: boolean
+  hasActiveFilters?: boolean
 }
 
 function formatLastMessage(iso: string | null): string {
@@ -23,7 +24,13 @@ function formatLastMessage(iso: string | null): string {
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
 }
 
-export function ConversationList({ conversations, selectedId, onSelect, loading }: ConversationListProps) {
+export function ConversationList({
+  conversations,
+  selectedId,
+  onSelect,
+  loading,
+  hasActiveFilters = false,
+}: ConversationListProps) {
   const [search, setSearch] = useState('')
 
   const filtered = conversations
@@ -32,6 +39,10 @@ export function ConversationList({ conversations, selectedId, onSelect, loading 
         ? (c.contact_name ?? c.contact_phone).toLowerCase().includes(search.toLowerCase())
         : true,
     )
+
+  const emptyMessage = hasActiveFilters
+    ? 'Nenhuma conversa para os filtros aplicados'
+    : 'Nenhuma conversa encontrada'
 
   return (
     <div className="flex flex-col h-full border-r border-gray-200 bg-white">
@@ -57,7 +68,7 @@ export function ConversationList({ conversations, selectedId, onSelect, loading 
         )}
         {!loading && filtered.length === 0 && (
           <div className="flex items-center justify-center h-32 text-gray-400 text-sm">
-            Nenhuma conversa encontrada
+            {emptyMessage}
           </div>
         )}
         {filtered.map((conv) => (

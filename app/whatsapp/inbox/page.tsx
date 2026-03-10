@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Bot,
   ChevronRight,
@@ -10,6 +10,7 @@ import {
 import { ConversationList } from './components/ConversationList'
 import { MessageThread } from './components/MessageThread'
 import { MessageComposer } from './components/MessageComposer'
+import { InboxFilters, type InboxFiltersValue, type InboxChannel } from './components/InboxFilters'
 import { useConversations } from './hooks/useConversations'
 import { useMessages } from './hooks/useMessages'
 import type { ConversationItem } from './hooks/useConversations'
@@ -136,13 +137,26 @@ function InsightsPanel({
 
 export default function InboxPage() {
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
-  const { conversations, loading: convLoading, patchConversation } = useConversations()
+  const [filters, setFilters] = useState<InboxFiltersValue>({})
+  const [channels, setChannels] = useState<InboxChannel[]>([])
+
+  // Carrega lista de canais para o seletor de filtros
+  useEffect(() => {
+    fetch('/api/whatsapp/channels?limit=100')
+      .then((r) => r.ok ? r.json() : { data: [] })
+      .then((json: { data?: InboxChannel[] }) => setChannels(json.data ?? []))
+      .catch(() => { /* silencia erro de carregamento de canais */ })
+  }, [])
+
+  const { conversations, loading: convLoading, patchConversation } = useConversations({ ...filters, pollInterval: 5000 })
 
   const selectedConversation = conversations.find((c) => c.id === selectedConversationId) ?? null
 
   const { messages, loading: msgLoading, error: msgError, hasMore, loadMore, refetch } = useMessages({
     conversationId: selectedConversationId,
   })
+
+  const hasActiveFilters = Object.keys(filters).some((k) => Boolean(filters[k as keyof InboxFiltersValue]))
 
   return (
     <main className="min-h-screen bg-slate-100 p-4 md:p-6">
@@ -164,11 +178,13 @@ export default function InboxPage() {
         </aside>
 
         <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+          <InboxFilters channels={channels} onFiltersChange={setFilters} />
           <ConversationList
             conversations={conversations}
             selectedId={selectedConversationId}
             onSelect={setSelectedConversationId}
             loading={convLoading}
+            hasActiveFilters={hasActiveFilters}
           />
         </section>
 
