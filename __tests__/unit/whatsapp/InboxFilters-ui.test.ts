@@ -104,8 +104,9 @@ describe('InboxFilters — seleção de provider', () => {
 // ---------------------------------------------------------------------------
 
 describe('InboxFilters — seleção de canal', () => {
-  it('renderiza seletor de canal (select ou dropdown)', () => {
-    expect(filtersSrc).toMatch(/<select|channel.*select|Select.*channel/i)
+  it('renderiza SelectTrigger/SelectContent (não <select> nativo)', () => {
+    expect(filtersSrc).toMatch(/SelectTrigger|SelectContent/)
+    expect(filtersSrc).not.toMatch(/<select\b/)
   })
 
   it('tem handler para mudança de canal', () => {
@@ -145,8 +146,12 @@ describe('InboxFilters — presets de data', () => {
 // ---------------------------------------------------------------------------
 
 describe('InboxFilters — período personalizado', () => {
-  it('tem inputs de data para date_from e date_to', () => {
-    expect(filtersSrc).toMatch(/type=['"]date['"]|input.*date/i)
+  it('usa DatePicker/Popover custom (não input[type="date"] nativo)', () => {
+    expect(filtersSrc).toMatch(/DatePicker|Popover/i)
+  })
+
+  it('não existe input[type="date"] no componente', () => {
+    expect(filtersSrc).not.toMatch(/type=['"]date['"]/)
   })
 
   it('date_from e date_to são controlados por estado', () => {

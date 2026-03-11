@@ -3,6 +3,17 @@
 import { useState } from 'react'
 import { Filter, X, ChevronDown } from 'lucide-react'
 
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { DatePicker } from './DatePicker'
+
 export interface InboxFiltersValue {
   provider?: string
   channel_id?: string
@@ -46,12 +57,12 @@ export function InboxFilters({ channels, onFiltersChange }: InboxFiltersProps) {
     onFiltersChange(clean)
   }
 
-  function handleProviderChange(value: string) {
+  function onProviderChange(value: string) {
     setProvider(value)
     applyFilters({ provider: value, channel_id, preset, date_from, date_to })
   }
 
-  function handleChannelChange(value: string) {
+  function onChannelChange(value: string) {
     setChannelId(value)
     applyFilters({ provider, channel_id: value, preset, date_from, date_to })
   }
@@ -86,139 +97,173 @@ export function InboxFilters({ channels, onFiltersChange }: InboxFiltersProps) {
 
   return (
     <div>
+      {/* Barra de controle */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-100">
-        <button
+        <Button
+          variant="ghost"
+          size="xs"
           onClick={() => setIsOpen(!isOpen)}
-          className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900"
           aria-expanded={isOpen}
+          className="text-gray-600 hover:text-gray-900 font-normal"
         >
           <Filter className="size-3.5" />
           Filtros
           {hasFilters && (
-            <span className="inline-flex items-center justify-center size-4 rounded-full bg-green-500 text-white text-[10px] font-semibold">
+            <Badge className="size-4 rounded-full p-0 text-[10px] flex items-center justify-center">
               {activeCount}
-            </span>
+            </Badge>
           )}
           <ChevronDown className={`size-3 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-        </button>
+        </Button>
         {hasFilters && (
-          <button
+          <Button
+            variant="ghost"
+            size="xs"
             onClick={clearFilters}
-            className="ml-auto flex items-center gap-1 text-xs text-gray-400 hover:text-gray-700"
+            className="ml-auto text-gray-400 hover:text-gray-700"
           >
             <X className="size-3" /> Limpar filtros
-          </button>
+          </Button>
         )}
       </div>
 
+      {/* Painel de filtros */}
       {isOpen && (
         <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 space-y-3">
           {/* Provedor */}
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Provedor</label>
-            <select
-              value={provider}
-              onChange={(e) => handleProviderChange(e.target.value)}
-              className="w-full text-sm border border-gray-200 rounded px-2 py-1.5 bg-white"
+            <Select
+              value={provider || '__all__'}
+              onValueChange={(v) => onProviderChange(v === '__all__' ? '' : v)}
             >
-              <option value="">Todos</option>
-              <option value="META_CLOUD">Meta</option>
-              <option value="EVOLUTION">Evolution</option>
-              <option value="UAZAPI">UAZAPI</option>
-            </select>
+              <SelectTrigger className="w-full h-8 text-sm">
+                <SelectValue placeholder="Todos" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Todos</SelectItem>
+                <SelectItem value="META_CLOUD">Meta</SelectItem>
+                <SelectItem value="EVOLUTION">Evolution</SelectItem>
+                <SelectItem value="UAZAPI">UAZAPI</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Canal */}
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Canal</label>
-            <select
-              value={channel_id}
-              onChange={(e) => handleChannelChange(e.target.value)}
-              className="w-full text-sm border border-gray-200 rounded px-2 py-1.5 bg-white"
+            <Select
+              value={channel_id || '__all__'}
+              onValueChange={(v) => onChannelChange(v === '__all__' ? '' : v)}
             >
-              <option value="">Todos os canais</option>
-              {channels.map((ch) => (
-                <option key={ch.id} value={ch.id}>{ch.name}</option>
-              ))}
-            </select>
+              <SelectTrigger className="w-full h-8 text-sm">
+                <SelectValue placeholder="Todos os canais" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Todos os canais</SelectItem>
+                {channels.map((ch) => (
+                  <SelectItem key={ch.id} value={ch.id}>{ch.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
-          {/* Presets */}
+          {/* Período — presets */}
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Período</label>
             <div className="flex gap-2">
-              <button
+              <Button
+                variant={preset === 'last_7_days' ? 'default' : 'outline'}
+                size="xs"
+                type="button"
                 onClick={() => handlePresetChange('last_7_days')}
-                className={`text-xs px-2 py-1 rounded border transition-colors ${
-                  preset === 'last_7_days'
-                    ? 'border-green-500 bg-green-50 text-green-700'
-                    : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                }`}
+                className={preset === 'last_7_days' ? 'border-green-500 bg-green-500 hover:bg-green-600' : ''}
               >
                 Últimos 7 dias
-              </button>
-              <button
+              </Button>
+              <Button
+                variant={preset === 'last_month' ? 'default' : 'outline'}
+                size="xs"
+                type="button"
                 onClick={() => handlePresetChange('last_month')}
-                className={`text-xs px-2 py-1 rounded border transition-colors ${
-                  preset === 'last_month'
-                    ? 'border-green-500 bg-green-50 text-green-700'
-                    : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                }`}
+                className={preset === 'last_month' ? 'border-green-500 bg-green-500 hover:bg-green-600' : ''}
               >
                 Mês passado
-              </button>
+              </Button>
             </div>
           </div>
 
-          {/* Período personalizado */}
+          {/* Período personalizado — DatePicker */}
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">De</label>
-              <input
-                type="date"
+              <DatePicker
                 value={date_from}
-                onChange={(e) => handleDateFromChange(e.target.value)}
-                className="w-full text-sm border border-gray-200 rounded px-2 py-1.5"
+                onChange={handleDateFromChange}
+                placeholder="Selecionar"
               />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Até</label>
-              <input
-                type="date"
+              <DatePicker
                 value={date_to}
-                onChange={(e) => handleDateToChange(e.target.value)}
-                className="w-full text-sm border border-gray-200 rounded px-2 py-1.5"
+                onChange={handleDateToChange}
+                placeholder="Selecionar"
               />
             </div>
           </div>
         </div>
       )}
 
+      {/* Chips de filtros ativos */}
       {hasFilters && !isOpen && (
         <div className="px-4 py-1.5 border-b border-gray-100 flex flex-wrap gap-1">
           {provider && (
-            <span className="inline-flex items-center gap-1 text-[10px] bg-green-50 text-green-700 border border-green-200 rounded-full px-2 py-0.5">
+            <Badge
+              variant="outline"
+              className="text-[10px] bg-green-50 text-green-700 border-green-200 rounded-full px-2 py-0.5"
+            >
               {provider === 'META_CLOUD' ? 'Meta' : provider}
-              <button onClick={() => handleProviderChange('')}><X className="size-2.5" /></button>
-            </span>
+              <button onClick={() => onProviderChange('')} aria-label="Remover filtro provedor">
+                <X className="size-2.5" />
+              </button>
+            </Badge>
           )}
           {channel_id && (
-            <span className="inline-flex items-center gap-1 text-[10px] bg-green-50 text-green-700 border border-green-200 rounded-full px-2 py-0.5">
+            <Badge
+              variant="outline"
+              className="text-[10px] bg-green-50 text-green-700 border-green-200 rounded-full px-2 py-0.5"
+            >
               {channels.find((c) => c.id === channel_id)?.name ?? 'Canal'}
-              <button onClick={() => handleChannelChange('')}><X className="size-2.5" /></button>
-            </span>
+              <button onClick={() => onChannelChange('')} aria-label="Remover filtro canal">
+                <X className="size-2.5" />
+              </button>
+            </Badge>
           )}
           {preset && (
-            <span className="inline-flex items-center gap-1 text-[10px] bg-green-50 text-green-700 border border-green-200 rounded-full px-2 py-0.5">
+            <Badge
+              variant="outline"
+              className="text-[10px] bg-green-50 text-green-700 border-green-200 rounded-full px-2 py-0.5"
+            >
               {preset === 'last_7_days' ? 'Últimos 7 dias' : 'Mês passado'}
-              <button onClick={() => handlePresetChange(preset)}><X className="size-2.5" /></button>
-            </span>
+              <button onClick={() => handlePresetChange(preset)} aria-label="Remover filtro período">
+                <X className="size-2.5" />
+              </button>
+            </Badge>
           )}
           {(date_from || date_to) && !preset && (
-            <span className="inline-flex items-center gap-1 text-[10px] bg-green-50 text-green-700 border border-green-200 rounded-full px-2 py-0.5">
+            <Badge
+              variant="outline"
+              className="text-[10px] bg-green-50 text-green-700 border-green-200 rounded-full px-2 py-0.5"
+            >
               {date_from ?? '...'} → {date_to ?? '...'}
-              <button onClick={() => { handleDateFromChange(''); setDateTo(''); applyFilters({ provider, channel_id, preset }) }}><X className="size-2.5" /></button>
-            </span>
+              <button
+                onClick={() => { handleDateFromChange(''); setDateTo(''); applyFilters({ provider, channel_id, preset }) }}
+                aria-label="Remover filtro período personalizado"
+              >
+                <X className="size-2.5" />
+              </button>
+            </Badge>
           )}
         </div>
       )}
