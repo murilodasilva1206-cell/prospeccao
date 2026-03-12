@@ -55,13 +55,13 @@ export async function POST(request: NextRequest, { params }: Params) {
   const rateLimit = await campaignSendLimiter.check(ip)
   if (!rateLimit.success) {
     return NextResponse.json(
-      { error: 'Muitas requisicoes' },
+      { error: 'Muitas requisições' },
       { status: 429, headers: { 'Retry-After': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)) } },
     )
   }
 
   const idParsed = CampaignIdSchema.safeParse((await params).id)
-  if (!idParsed.success) return NextResponse.json({ error: 'id invalido' }, { status: 400 })
+  if (!idParsed.success) return NextResponse.json({ error: 'id inválido' }, { status: 400 })
   const campaignId = idParsed.data
 
   // Use a separate pool client for the auth check, then work with the campaign
@@ -108,7 +108,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 
     if (!channel) return NextResponse.json({ error: 'Canal nao encontrado' }, { status: 404 })
     if (channel.status !== 'CONNECTED') {
-      return NextResponse.json({ error: `Canal nao esta conectado (status: ${channel.status})` }, { status: 409 })
+      return NextResponse.json({ error: `Canal não está conectado (status: ${channel.status})` }, { status: 409 })
     }
 
     // Mark campaign as 'sending'
@@ -159,7 +159,7 @@ export async function POST(request: NextRequest, { params }: Params) {
         const skipClient = await pool.connect()
         try {
           await updateRecipientStatus(skipClient, recipient.id, 'skipped', {
-            error_message: 'Telefone ausente ou invalido',
+            error_message: 'Telefone ausente ou inválido',
           })
         } finally {
           skipClient.release()

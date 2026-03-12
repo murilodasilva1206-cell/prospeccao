@@ -20,9 +20,9 @@ export async function GET(request: NextRequest) {
   // 1. Rate limit — check before any DB work
   const rateLimit = await buscaLimiter.check(ip)
   if (!rateLimit.success) {
-    log.warn('Limite de requisicoes excedido em /api/busca')
+    log.warn('Limite de requisições excedido em /api/busca')
     return NextResponse.json(
-      { error: 'Muitas requisicoes — tente novamente em breve' },
+      { error: 'Muitas requisições — tente novamente em breve' },
       {
         status: 429,
         headers: {
@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
     if (err instanceof ZodError) {
       log.info({ issues: err.issues }, 'Erro de validacao em /api/busca')
       return NextResponse.json(
-        { error: 'Parametros invalidos', details: err.issues },
+        { error: 'Parâmetros inválidos', details: err.issues },
         { status: 400 },
       )
     }
@@ -63,7 +63,7 @@ export async function GET(request: NextRequest) {
     } catch (err) {
       const res = authErrorResponse(err)
       if (res) return res
-      log.error({ err }, 'Erro inesperado durante autenticacao em /api/busca')
+      log.error({ err }, 'Erro inesperado durante autenticação em /api/busca')
       return NextResponse.json({ error: 'Erro interno do servidor' }, { status: 500 })
     } finally {
       authClient.release()

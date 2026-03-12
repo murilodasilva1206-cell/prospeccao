@@ -44,7 +44,7 @@ export async function GET(request: NextRequest, { params }: Params) {
   const rateLimit = await whatsappInboxLimiter.check(ip)
   if (!rateLimit.success) {
     return NextResponse.json(
-      { error: 'Muitas requisicoes' },
+      { error: 'Muitas requisições' },
       { status: 429, headers: { 'Retry-After': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)) } },
     )
   }
@@ -72,7 +72,7 @@ export async function GET(request: NextRequest, { params }: Params) {
         })
       } catch (err) {
         if (err instanceof ZodError) {
-          return NextResponse.json({ error: 'Parametros invalidos', details: err.issues }, { status: 400 })
+          return NextResponse.json({ error: 'Parâmetros inválidos', details: err.issues }, { status: 400 })
         }
         throw err
       }
@@ -105,7 +105,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   const rateLimit = await whatsappInboxLimiter.check(ip)
   if (!rateLimit.success) {
     return NextResponse.json(
-      { error: 'Muitas requisicoes' },
+      { error: 'Muitas requisições' },
       { status: 429, headers: { 'Retry-After': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)) } },
     )
   }
@@ -123,7 +123,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     }
     body = { text: raw.text as string }
   } catch {
-    return NextResponse.json({ error: 'JSON invalido' }, { status: 400 })
+    return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
   }
 
   try {

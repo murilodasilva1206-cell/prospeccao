@@ -29,13 +29,13 @@ export async function GET(request: NextRequest, { params }: Params) {
   const rateLimit = await whatsappChannelLimiter.check(ip)
   if (!rateLimit.success) {
     return NextResponse.json(
-      { error: 'Muitas requisicoes — tente novamente em breve' },
+      { error: 'Muitas requisições — tente novamente em breve' },
       { status: 429, headers: { 'Retry-After': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)) } },
     )
   }
 
   const idParsed = ChannelIdSchema.safeParse((await params).id)
-  if (!idParsed.success) return NextResponse.json({ error: 'id invalido' }, { status: 400 })
+  if (!idParsed.success) return NextResponse.json({ error: 'id inválido' }, { status: 400 })
   const id = idParsed.data
 
   try {
@@ -74,13 +74,13 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   const rateLimit = await whatsappChannelLimiter.check(ip)
   if (!rateLimit.success) {
     return NextResponse.json(
-      { error: 'Muitas requisicoes — tente novamente em breve' },
+      { error: 'Muitas requisições — tente novamente em breve' },
       { status: 429, headers: { 'Retry-After': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)) } },
     )
   }
 
   const idParsed = ChannelIdSchema.safeParse((await params).id)
-  if (!idParsed.success) return NextResponse.json({ error: 'id invalido' }, { status: 400 })
+  if (!idParsed.success) return NextResponse.json({ error: 'id inválido' }, { status: 400 })
   const id = idParsed.data
 
   try {
@@ -103,9 +103,9 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         body = ChannelUpdateSchema.parse(raw)
       } catch (err) {
         if (err instanceof ZodError) {
-          return NextResponse.json({ error: 'Parametros invalidos', details: err.issues }, { status: 400 })
+          return NextResponse.json({ error: 'Parâmetros inválidos', details: err.issues }, { status: 400 })
         }
-        return NextResponse.json({ error: 'JSON invalido no corpo da requisicao' }, { status: 400 })
+        return NextResponse.json({ error: 'JSON inválido no corpo da requisição' }, { status: 400 })
       }
 
       // Provider is immutable — the body must declare the same provider as the channel
@@ -173,7 +173,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
           const httpStatus = adapterErr instanceof CredentialValidationError ? adapterErr.httpStatus : null
           const userMessage = adapterErr instanceof CredentialValidationError
             ? adapterErr.userMessage
-            : 'Credenciais invalidas ou provider inacessivel'
+            : 'Credenciais inválidas ou provider inacessivel'
           log.warn(
             { provider: channel.provider, channelId: id, httpStatus, errMsg },
             'Revalidacao de credenciais falhou — alteracoes descartadas',

@@ -157,7 +157,7 @@ describe('POST /api/auth/login', () => {
     const res = await loginRoute(req)
     expect(res.status).toBe(400)
     const json = await res.json() as { error: string }
-    expect(json.error).toBe('Parametros invalidos')
+    expect(json.error).toBe('Parâmetros inválidos')
   })
 
   it('returns 401 when user does not exist', async () => {

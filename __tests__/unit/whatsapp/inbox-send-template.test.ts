@@ -355,7 +355,7 @@ describe('Cenário 3 — POST /send-template inválido retorna 400', () => {
 
     expect(res.status).toBe(400)
     const body = await res.json() as { error: string }
-    expect(body.error).toMatch(/param|invalid|invalido/i)
+    expect(body.error).toMatch(/param|invalid|inválido/i)
   })
 
   it('retorna 400 quando "name" está ausente', async () => {

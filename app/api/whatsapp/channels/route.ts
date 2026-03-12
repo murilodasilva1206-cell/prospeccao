@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
   const rateLimit = await whatsappChannelLimiter.check(ip)
   if (!rateLimit.success) {
     return NextResponse.json(
-      { error: 'Muitas requisicoes — tente novamente em breve' },
+      { error: 'Muitas requisições — tente novamente em breve' },
       { status: 429, headers: { 'Retry-After': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)) } },
     )
   }
@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
   const rateLimit = await whatsappChannelLimiter.check(ip)
   if (!rateLimit.success) {
     return NextResponse.json(
-      { error: 'Muitas requisicoes — tente novamente em breve' },
+      { error: 'Muitas requisições — tente novamente em breve' },
       { status: 429, headers: { 'Retry-After': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)) } },
     )
   }
@@ -77,9 +77,9 @@ export async function POST(request: NextRequest) {
         body = ChannelCreateSchema.parse(raw)
       } catch (err) {
         if (err instanceof ZodError) {
-          return NextResponse.json({ error: 'Parametros invalidos', details: err.issues }, { status: 400 })
+          return NextResponse.json({ error: 'Parâmetros inválidos', details: err.issues }, { status: 400 })
         }
-        return NextResponse.json({ error: 'JSON invalido no corpo da requisicao' }, { status: 400 })
+        return NextResponse.json({ error: 'JSON inválido no corpo da requisição' }, { status: 400 })
       }
 
       // Encrypt credentials and generate webhook secret after auth succeeds
@@ -118,7 +118,7 @@ export async function POST(request: NextRequest) {
           'Validacao de credenciais falhou — canal removido',
         )
         return NextResponse.json(
-          { error: 'Credenciais invalidas ou provider inacessivel' },
+          { error: 'Credenciais inválidas ou provider inacessivel' },
           { status: 422 },
         )
       }

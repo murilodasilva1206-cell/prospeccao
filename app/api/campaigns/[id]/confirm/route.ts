@@ -28,13 +28,13 @@ export async function POST(request: NextRequest, { params }: Params) {
   const rateLimit = await campaignLimiter.check(ip)
   if (!rateLimit.success) {
     return NextResponse.json(
-      { error: 'Muitas requisicoes' },
+      { error: 'Muitas requisições' },
       { status: 429, headers: { 'Retry-After': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)) } },
     )
   }
 
   const idParsed = CampaignIdSchema.safeParse((await params).id)
-  if (!idParsed.success) return NextResponse.json({ error: 'id invalido' }, { status: 400 })
+  if (!idParsed.success) return NextResponse.json({ error: 'id inválido' }, { status: 400 })
   const campaignId = idParsed.data
 
   let body
@@ -43,9 +43,9 @@ export async function POST(request: NextRequest, { params }: Params) {
     body = ConfirmCampaignSchema.parse(raw)
   } catch (err) {
     if (err instanceof ZodError) {
-      return NextResponse.json({ error: 'Parametros invalidos', details: err.issues }, { status: 400 })
+      return NextResponse.json({ error: 'Parâmetros inválidos', details: err.issues }, { status: 400 })
     }
-    return NextResponse.json({ error: 'JSON invalido no corpo da requisicao' }, { status: 400 })
+    return NextResponse.json({ error: 'JSON inválido no corpo da requisição' }, { status: 400 })
   }
 
   try {
@@ -65,7 +65,7 @@ export async function POST(request: NextRequest, { params }: Params) {
         )
       }
       if (!campaign.confirmation_token) {
-        return NextResponse.json({ error: 'Token de confirmacao ausente' }, { status: 400 })
+        return NextResponse.json({ error: 'Token de confirmação ausente' }, { status: 400 })
       }
 
       // Constant-time comparison to prevent timing attacks
@@ -76,8 +76,8 @@ export async function POST(request: NextRequest, { params }: Params) {
         timingSafeEqual(storedBuf, givenBuf)
 
       if (!tokenMatch) {
-        log.warn({ campaignId }, 'Token de confirmacao invalido')
-        return NextResponse.json({ error: 'Token de confirmacao invalido' }, { status: 403 })
+        log.warn({ campaignId }, 'Token de confirmação inválido')
+        return NextResponse.json({ error: 'Token de confirmação inválido' }, { status: 403 })
       }
 
       // Transition to awaiting_channel; clear token (single-use)

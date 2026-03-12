@@ -27,13 +27,13 @@ export async function POST(request: NextRequest, { params }: Params) {
   const rateLimit = await campaignLimiter.check(ip)
   if (!rateLimit.success) {
     return NextResponse.json(
-      { error: 'Muitas requisicoes' },
+      { error: 'Muitas requisições' },
       { status: 429, headers: { 'Retry-After': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)) } },
     )
   }
 
   const idParsed = CampaignIdSchema.safeParse((await params).id)
-  if (!idParsed.success) return NextResponse.json({ error: 'id invalido' }, { status: 400 })
+  if (!idParsed.success) return NextResponse.json({ error: 'id inválido' }, { status: 400 })
   const campaignId = idParsed.data
 
   let body
@@ -42,9 +42,9 @@ export async function POST(request: NextRequest, { params }: Params) {
     body = SetCampaignMessageSchema.parse(raw)
   } catch (err) {
     if (err instanceof ZodError) {
-      return NextResponse.json({ error: 'Parametros invalidos', details: err.issues }, { status: 400 })
+      return NextResponse.json({ error: 'Parâmetros inválidos', details: err.issues }, { status: 400 })
     }
-    return NextResponse.json({ error: 'JSON invalido no corpo da requisicao' }, { status: 400 })
+    return NextResponse.json({ error: 'JSON inválido no corpo da requisição' }, { status: 400 })
   }
 
   try {
@@ -59,7 +59,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       }
       if (campaign.status !== 'awaiting_message') {
         return NextResponse.json(
-          { error: `Campanha nao esta aguardando mensagem (status: ${campaign.status})` },
+          { error: `Campanha não está aguardando mensagem (status: ${campaign.status})` },
           { status: 409 },
         )
       }

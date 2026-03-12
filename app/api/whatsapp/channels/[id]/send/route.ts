@@ -23,26 +23,26 @@ export async function POST(request: NextRequest, { params }: Params) {
   const rateLimit = await whatsappSendLimiter.check(ip)
   if (!rateLimit.success) {
     return NextResponse.json(
-      { error: 'Muitas requisicoes — tente novamente em breve' },
+      { error: 'Muitas requisições — tente novamente em breve' },
       { status: 429, headers: { 'Retry-After': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)) } },
     )
   }
 
   const idParsed = ChannelIdSchema.safeParse((await params).id)
-  if (!idParsed.success) return NextResponse.json({ error: 'id invalido' }, { status: 400 })
+  if (!idParsed.success) return NextResponse.json({ error: 'id inválido' }, { status: 400 })
   const id = idParsed.data
 
   let body: unknown
   try {
     body = await request.json()
   } catch {
-    return NextResponse.json({ error: 'Corpo da requisicao nao e JSON valido' }, { status: 400 })
+    return NextResponse.json({ error: 'Corpo da requisição não é JSON valido' }, { status: 400 })
   }
 
   const parsed = SendMessageSchema.safeParse(body)
   if (!parsed.success) {
     return NextResponse.json(
-      { error: parsed.error.issues[0]?.message ?? 'Dados invalidos' },
+      { error: parsed.error.issues[0]?.message ?? 'Dados inválidos' },
       { status: 400 },
     )
   }
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 
       if (channel.status !== 'CONNECTED') {
         return NextResponse.json(
-          { error: `Canal nao esta conectado (status atual: ${channel.status})` },
+          { error: `Canal não está conectado (status atual: ${channel.status})` },
           { status: 409 },
         )
       }

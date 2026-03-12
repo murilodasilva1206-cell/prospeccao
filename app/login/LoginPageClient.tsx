@@ -222,7 +222,7 @@ export default function LoginPageClient() {
             {needsSetupSecret && (
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-zinc-700">
-                  Chave de configuracao (SETUP_SECRET)
+                  Chave de configuração (SETUP_SECRET)
                 </label>
                 <input
                   type="password"

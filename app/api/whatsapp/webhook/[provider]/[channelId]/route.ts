@@ -42,7 +42,7 @@ export async function GET(request: NextRequest, { params }: Params) {
   const normalized = { provider: normalizeProvider(rawParams.provider), channelId: rawParams.channelId }
   const pathParsed = WebhookPathSchema.safeParse(normalized)
   if (!pathParsed.success) {
-    return NextResponse.json({ error: 'Parametros de rota invalidos' }, { status: 400 })
+    return NextResponse.json({ error: 'Parâmetros de rota inválidos' }, { status: 400 })
   }
   const { provider, channelId } = pathParsed.data
 
@@ -56,7 +56,7 @@ export async function GET(request: NextRequest, { params }: Params) {
   const challenge = url.searchParams.get('hub.challenge')
 
   if (mode !== 'subscribe' || !verifyToken || !challenge) {
-    return NextResponse.json({ error: 'Parametros de verificacao ausentes' }, { status: 400 })
+    return NextResponse.json({ error: 'Parâmetros de verificacao ausentes' }, { status: 400 })
   }
 
   try {
@@ -67,7 +67,7 @@ export async function GET(request: NextRequest, { params }: Params) {
         return NextResponse.json({ error: 'Canal nao encontrado' }, { status: 404 })
       }
       if (!safeCompare(verifyToken, channel.webhook_secret)) {
-        return NextResponse.json({ error: 'Token de verificacao invalido' }, { status: 403 })
+        return NextResponse.json({ error: 'Token de verificacao inválido' }, { status: 403 })
       }
       return new NextResponse(challenge, {
         status: 200,
@@ -94,7 +94,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   const rateLimit = await whatsappWebhookLimiter.check(ip)
   if (!rateLimit.success) {
     return NextResponse.json(
-      { error: 'Muitas requisicoes' },
+      { error: 'Muitas requisições' },
       { status: 429, headers: { 'Retry-After': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)) } },
     )
   }
@@ -104,7 +104,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   const normalized = { provider: normalizeProvider(rawParams.provider), channelId: rawParams.channelId }
   const pathParsed = WebhookPathSchema.safeParse(normalized)
   if (!pathParsed.success) {
-    return NextResponse.json({ error: 'Parametros de rota invalidos' }, { status: 400 })
+    return NextResponse.json({ error: 'Parâmetros de rota inválidos' }, { status: 400 })
   }
 
   const { provider, channelId } = pathParsed.data
@@ -170,8 +170,8 @@ export async function POST(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: 'Provider nao corresponde ao canal' }, { status: 400 })
     }
     if (err instanceof SignatureInvalidError) {
-      log.warn({ provider, channelId }, 'Assinatura de webhook invalida')
-      return NextResponse.json({ error: 'Assinatura invalida' }, { status: 401 })
+      log.warn({ provider, channelId }, 'Assinatura de webhook inválida')
+      return NextResponse.json({ error: 'Assinatura inválida' }, { status: 401 })
     }
     log.error({ err }, 'Erro interno ao processar webhook')
     return NextResponse.json({ error: 'Erro interno do servidor' }, { status: 500 })

@@ -291,7 +291,7 @@ export const LanguageSchema = z
       )
     }
     return false
-  }, 'Idioma invalido — use formato ISO 639 (ex: pt, pt_BR, en_US)')
+  }, 'Idioma inválido — use formato ISO 639 (ex: pt, pt_BR, en_US)')
 
 // ---------------------------------------------------------------------------
 // /api/whatsapp/channels/:id/send-template — Meta template messages

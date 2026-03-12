@@ -168,7 +168,7 @@ describe('POST /api/campaigns/:id/recipients/retry-all-failed', () => {
       const res = await retryAllFailedRoute(req, makeParams('not-a-uuid'))
       expect(res.status).toBe(400)
       const body = await res.json() as { error: string }
-      expect(body.error).toMatch(/id invalido/)
+      expect(body.error).toMatch(/id inválido/)
     })
   })
 

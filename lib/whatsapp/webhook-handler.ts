@@ -56,7 +56,7 @@ export async function processWebhook(
   try {
     payload = JSON.parse(rawBody)
   } catch {
-    throw new Error('Webhook body nao e JSON valido')
+    throw new Error('Webhook body não é JSON valido')
   }
 
   // 5. Normalize to internal event
@@ -123,7 +123,7 @@ export class ProviderMismatchError extends Error {
 
 export class SignatureInvalidError extends Error {
   constructor() {
-    super('Assinatura do webhook invalida ou ausente')
+    super('Assinatura do webhook inválida ou ausente')
     this.name = 'SignatureInvalidError'
   }
 }

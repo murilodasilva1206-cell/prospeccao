@@ -88,7 +88,7 @@ async function handler(request: NextRequest): Promise<NextResponse> {
   }
 
   if (!authorized) {
-    log.warn('Tentativa de acesso ao cron com token invalido')
+    log.warn('Tentativa de acesso ao cron com token inválido')
     return NextResponse.json({ error: 'Nao autorizado' }, { status: 401 })
   }
 
@@ -178,7 +178,7 @@ async function handler(request: NextRequest): Promise<NextResponse> {
         checkClient.release()
       }
       if (!fresh || fresh.status !== 'sending') {
-        log.info({ campaignId: campaign.id, status: fresh?.status }, 'Campanha nao esta mais enviando — interrompendo tick')
+        log.info({ campaignId: campaign.id, status: fresh?.status }, 'Campanha não está mais enviando — interrompendo tick')
         break
       }
 
@@ -210,7 +210,7 @@ async function handler(request: NextRequest): Promise<NextResponse> {
         const skipClient = await pool.connect()
         try {
           await updateRecipientStatus(skipClient, recipient.id, 'skipped', {
-            error_message: 'Telefone ausente ou invalido',
+            error_message: 'Telefone ausente ou inválido',
           })
         } finally {
           skipClient.release()

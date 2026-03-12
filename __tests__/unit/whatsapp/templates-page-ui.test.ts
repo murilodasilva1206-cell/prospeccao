@@ -10,7 +10,7 @@
 //   4. Sync 429 -> usa Retry-After + mensagem de limite
 //   5. Sync 500/503 -> mensagem amigavel, nao tecnica + botao tentar novamente
 //   6. Botao sincronizar desabilitado durante sync (previne duplo clique)
-//   7. selectedChannelId e usado na URL da requisicao de sync e list
+//   7. selectedChannelId e usado na URL da requisição de sync e list
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect } from 'vitest'
@@ -65,7 +65,7 @@ describe('Sync 422 -- canal sem WABA ID configurado', () => {
     expect(src).toMatch(/waba\s*id|WABA\s*ID|credenciais/i)
   })
 
-  it('mensagem 422 nao e generica de servidor', () => {
+  it('mensagem 422 não é generica de servidor', () => {
     // Nao deve confundir com erro 500
     const block422 = src.match(/status\s*===\s*422[\s\S]{0,300}/)?.[0] ?? ''
     expect(block422).not.toMatch(/erro interno|server error/i)
@@ -73,7 +73,7 @@ describe('Sync 422 -- canal sem WABA ID configurado', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 3. Sync 409 -- canal nao e META_CLOUD
+// 3. Sync 409 -- canal não é META_CLOUD
 // ---------------------------------------------------------------------------
 
 describe('Sync 409 -- provider nao suportado', () => {
@@ -81,7 +81,7 @@ describe('Sync 409 -- provider nao suportado', () => {
     expect(src).toContain('409')
   })
 
-  it('mensagem 409 menciona META_CLOUD ou operacao nao suportada', () => {
+  it('mensagem 409 menciona META_CLOUD ou operação nao suportada', () => {
     const block409 = src.match(/status\s*===\s*409[\s\S]{0,300}/)?.[0] ?? ''
     expect(block409).toMatch(/META_CLOUD|nao suportad|somente|apenas/i)
   })
@@ -91,7 +91,7 @@ describe('Sync 409 -- provider nao suportado', () => {
 // 4. Sync 429 -- rate limit
 // ---------------------------------------------------------------------------
 
-describe('Sync 429 -- limite de requisicoes', () => {
+describe('Sync 429 -- limite de requisições', () => {
   it('captura status 429 explicitamente', () => {
     expect(src).toContain('429')
   })
@@ -156,7 +156,7 @@ describe('Sync 500 -- erro interno do servidor', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 6. Botao sincronizar -- disabled durante operacao (previne duplo clique)
+// 6. Botao sincronizar -- disabled durante operação (previne duplo clique)
 // ---------------------------------------------------------------------------
 
 describe('Botao "Sincronizar templates" -- estado disabled', () => {
@@ -166,7 +166,7 @@ describe('Botao "Sincronizar templates" -- estado disabled', () => {
   })
 
   it('exibe indicador visual (spinner/texto) durante sync', () => {
-    // Loader2 ou texto "Sincronizando" enquanto a requisicao esta em curso
+    // Loader2 ou texto "Sincronizando" enquanto a requisição esta em curso
     expect(src).toMatch(/Sincronizando|animate-spin|Loader2/)
   })
 
@@ -178,17 +178,17 @@ describe('Botao "Sincronizar templates" -- estado disabled', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 7. selectedChannelId alimenta as requisicoes de sync e listagem
+// 7. selectedChannelId alimenta as requisições de sync e listagem
 // ---------------------------------------------------------------------------
 
-describe('selectedChannelId controla o alvo das requisicoes', () => {
+describe('selectedChannelId controla o alvo das requisições', () => {
   it('URL de sync usa selectedChannelId dinamico', () => {
-    // A requisicao POST de sync inclui o channelId na URL
+    // A requisição POST de sync inclui o channelId na URL
     expect(src).toMatch(/\$\{selectedChannelId\}\/templates\/sync/)
   })
 
   it('URL de listagem usa selectedChannelId dinamico', () => {
-    // A requisicao GET de templates inclui o channelId na URL
+    // A requisição GET de templates inclui o channelId na URL
     expect(src).toMatch(/\$\{selectedChannelId\}\/templates/)
   })
 

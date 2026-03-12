@@ -22,13 +22,13 @@ export async function POST(request: NextRequest, { params }: Params) {
   const rateLimit = await whatsappChannelLimiter.check(ip)
   if (!rateLimit.success) {
     return NextResponse.json(
-      { error: 'Muitas requisicoes — tente novamente em breve' },
+      { error: 'Muitas requisições — tente novamente em breve' },
       { status: 429, headers: { 'Retry-After': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)) } },
     )
   }
 
   const idParsed = ChannelIdSchema.safeParse((await params).id)
-  if (!idParsed.success) return NextResponse.json({ error: 'id invalido' }, { status: 400 })
+  if (!idParsed.success) return NextResponse.json({ error: 'id inválido' }, { status: 400 })
   const id = idParsed.data
 
   try {

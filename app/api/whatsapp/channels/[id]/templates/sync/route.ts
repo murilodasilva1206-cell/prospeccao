@@ -29,13 +29,13 @@ export async function POST(request: NextRequest, { params }: Params) {
   const rateLimit = await whatsappTemplateSyncLimiter.check(ip)
   if (!rateLimit.success) {
     return NextResponse.json(
-      { error: 'Muitas requisicoes de sincronizacao' },
+      { error: 'Muitas requisições de sincronização' },
       { status: 429, headers: { 'Retry-After': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)) } },
     )
   }
 
   const idParsed = ChannelIdSchema.safeParse((await params).id)
-  if (!idParsed.success) return NextResponse.json({ error: 'id invalido' }, { status: 400 })
+  if (!idParsed.success) return NextResponse.json({ error: 'id inválido' }, { status: 400 })
   const channelId = idParsed.data
 
   try {
@@ -50,7 +50,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       }
       if (channel.provider !== 'META_CLOUD') {
         return NextResponse.json(
-          { error: 'Sincronizacao de templates disponivel apenas para canais META_CLOUD' },
+          { error: 'Sincronização de templates disponivel apenas para canais META_CLOUD' },
           { status: 409 },
         )
       }

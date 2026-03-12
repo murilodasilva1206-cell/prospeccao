@@ -28,13 +28,13 @@ export async function POST(request: NextRequest, { params }: Params) {
   const rateLimit = await whatsappSendLimiter.check(ip)
   if (!rateLimit.success) {
     return NextResponse.json(
-      { error: 'Muitas requisicoes' },
+      { error: 'Muitas requisições' },
       { status: 429, headers: { 'Retry-After': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)) } },
     )
   }
 
   const idParsed = ChannelIdSchema.safeParse((await params).id)
-  if (!idParsed.success) return NextResponse.json({ error: 'id invalido' }, { status: 400 })
+  if (!idParsed.success) return NextResponse.json({ error: 'id inválido' }, { status: 400 })
   const channelId = idParsed.data
 
   let body
@@ -43,9 +43,9 @@ export async function POST(request: NextRequest, { params }: Params) {
     body = SendTemplateSchema.parse(raw)
   } catch (err) {
     if (err instanceof ZodError) {
-      return NextResponse.json({ error: 'Parametros invalidos', details: err.issues }, { status: 400 })
+      return NextResponse.json({ error: 'Parâmetros inválidos', details: err.issues }, { status: 400 })
     }
-    return NextResponse.json({ error: 'JSON invalido no corpo da requisicao' }, { status: 400 })
+    return NextResponse.json({ error: 'JSON inválido no corpo da requisição' }, { status: 400 })
   }
 
   try {
@@ -60,7 +60,7 @@ export async function POST(request: NextRequest, { params }: Params) {
         return NextResponse.json({ error: 'Templates oficiais disponiveis apenas para META_CLOUD' }, { status: 409 })
       }
       if (channel.status !== 'CONNECTED') {
-        return NextResponse.json({ error: `Canal nao esta conectado (status: ${channel.status})` }, { status: 409 })
+        return NextResponse.json({ error: `Canal não está conectado (status: ${channel.status})` }, { status: 409 })
       }
 
       const creds = decryptCredentials(channel.credentials_encrypted)

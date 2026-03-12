@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
   if (!rateLimit.success) {
     log.warn('Rate limit exceeded on /api/agente')
     return NextResponse.json(
-      { error: 'Muitas requisicoes — tente novamente em breve' },
+      { error: 'Muitas requisições — tente novamente em breve' },
       {
         status: 429,
         headers: {
@@ -53,12 +53,12 @@ export async function POST(request: NextRequest) {
     if (err instanceof ZodError) {
       log.info({ issues: err.issues }, 'Validation error on /api/agente')
       return NextResponse.json(
-        { error: 'Requisicao invalida', details: err.issues },
+        { error: 'Requisição inválida', details: err.issues },
         { status: 400 },
       )
     }
     log.info({ err }, 'Invalid JSON body on /api/agente')
-    return NextResponse.json({ error: 'JSON invalido no corpo da requisicao' }, { status: 400 })
+    return NextResponse.json({ error: 'JSON inválido no corpo da requisição' }, { status: 400 })
   }
 
   // 3. Authentication + LLM profile resolution

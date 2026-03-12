@@ -146,7 +146,7 @@ describe('PATCH /api/whatsapp/channels/:id — schema validation', () => {
     const res = await PATCH(req, routeParams(CHANNEL_ID))
     expect(res.status).toBe(400)
     const body = await res.json() as { error: string; details?: unknown[] }
-    expect(body.error).toMatch(/invalido/i)
+    expect(body.error).toMatch(/inválido/i)
     expect(body.details).toBeDefined()
   })
 

@@ -51,7 +51,7 @@ export default function Home() {
             <p className="text-sm font-semibold text-emerald-900">Modulo WhatsApp</p>
             <p className="mt-1 text-xs text-emerald-700">OmniChannel</p>
             <p className="mt-2 text-xs text-emerald-800/80">
-              Canais, inbox e chaves API para operacao completa.
+              Canais, inbox e chaves API para operação completa.
             </p>
           </a>
         </div>

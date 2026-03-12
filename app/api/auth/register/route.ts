@@ -17,7 +17,7 @@ import { getClientIp } from '@/lib/get-ip'
 import { createUser, countUsers } from '@/lib/user-auth'
 
 const RegisterSchema = z.object({
-  email: z.string().email('Email invalido'),
+  email: z.string().email('Email inválido'),
   password: z.string().min(8, 'Senha deve ter pelo menos 8 caracteres'),
   setup_secret: z.string().optional(),
 })
@@ -47,9 +47,9 @@ export async function POST(request: NextRequest) {
     body = RegisterSchema.parse(raw)
   } catch (err) {
     if (err instanceof ZodError) {
-      return NextResponse.json({ error: 'Parametros invalidos', details: err.issues }, { status: 400 })
+      return NextResponse.json({ error: 'Parâmetros inválidos', details: err.issues }, { status: 400 })
     }
-    return NextResponse.json({ error: 'JSON invalido no corpo da requisicao' }, { status: 400 })
+    return NextResponse.json({ error: 'JSON inválido no corpo da requisição' }, { status: 400 })
   }
 
   // If SETUP_SECRET is configured, the caller must supply it to prevent
@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
   const expectedSecret = process.env.SETUP_SECRET
   if (expectedSecret) {
     if (!body.setup_secret || body.setup_secret !== expectedSecret) {
-      log.warn({ ip }, 'Tentativa de registro com setup_secret invalido')
+      log.warn({ ip }, 'Tentativa de registro com setup_secret inválido')
       return NextResponse.json(
         { error: 'setup_secret incorreto ou ausente' },
         { status: 403 },

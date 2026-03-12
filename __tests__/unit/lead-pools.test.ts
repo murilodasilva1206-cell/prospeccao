@@ -240,7 +240,7 @@ describe('POST /api/lead-pools', () => {
       const res = await createRoute(req)
       expect(res.status).toBe(400)
       const body = await res.json() as { error: string }
-      expect(body.error).toBe('Parametros invalidos')
+      expect(body.error).toBe('Parâmetros inválidos')
     })
 
     it('returns 400 when leads array is empty', async () => {
@@ -250,7 +250,7 @@ describe('POST /api/lead-pools', () => {
       const res = await createRoute(req)
       expect(res.status).toBe(400)
       const body = await res.json() as { error: string }
-      expect(body.error).toBe('Parametros invalidos')
+      expect(body.error).toBe('Parâmetros inválidos')
     })
 
     it('returns 400 when leads array exceeds 500 items', async () => {
@@ -268,7 +268,7 @@ describe('POST /api/lead-pools', () => {
       const res = await createRoute(req)
       expect(res.status).toBe(400)
       const body = await res.json() as { error: string }
-      expect(body.error).toBe('Parametros invalidos')
+      expect(body.error).toBe('Parâmetros inválidos')
     })
   })
 
@@ -321,7 +321,7 @@ describe('POST /api/lead-pools', () => {
       const res = await createRoute(req)
       expect(res.status).toBe(429)
       const body = await res.json() as { error: string }
-      expect(body.error).toBe('Muitas requisicoes')
+      expect(body.error).toBe('Muitas requisições')
     })
   })
 })
@@ -420,7 +420,7 @@ describe('GET /api/lead-pools', () => {
       const res = await listRoute(req)
       expect(res.status).toBe(429)
       const body = await res.json() as { error: string }
-      expect(body.error).toBe('Muitas requisicoes')
+      expect(body.error).toBe('Muitas requisições')
     })
   })
 
@@ -596,7 +596,7 @@ describe('DELETE /api/lead-pools/:id', () => {
       const res = await deleteRoute(req, makeParams(POOL_ID))
       expect(res.status).toBe(429)
       const body = await res.json() as { error: string }
-      expect(body.error).toBe('Muitas requisicoes')
+      expect(body.error).toBe('Muitas requisições')
     })
   })
 })

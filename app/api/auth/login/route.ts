@@ -17,7 +17,7 @@ const SESSION_EXP_COOKIE = 'session_exp' // non-HttpOnly companion: lets middlew
 const SESSION_MAX_AGE = 28800 // 8 hours in seconds
 
 const LoginSchema = z.object({
-  email: z.string().email('Email invalido'),
+  email: z.string().email('Email inválido'),
   password: z.string().min(1, 'Senha obrigatoria'),
 })
 
@@ -46,9 +46,9 @@ export async function POST(request: NextRequest) {
     body = LoginSchema.parse(raw)
   } catch (err) {
     if (err instanceof ZodError) {
-      return NextResponse.json({ error: 'Parametros invalidos', details: err.issues }, { status: 400 })
+      return NextResponse.json({ error: 'Parâmetros inválidos', details: err.issues }, { status: 400 })
     }
-    return NextResponse.json({ error: 'JSON invalido no corpo da requisicao' }, { status: 400 })
+    return NextResponse.json({ error: 'JSON inválido no corpo da requisição' }, { status: 400 })
   }
 
   const client = await pool.connect()
@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
       : await verifyPassword(body.password, 'deadbeef:deadbeef') // dummy — always false
 
     if (!user || !validPassword) {
-      log.warn({ email: body.email }, 'Tentativa de login com credenciais invalidas')
+      log.warn({ email: body.email }, 'Tentativa de login com credenciais inválidas')
       return NextResponse.json({ error: 'Email ou senha incorretos' }, { status: 401 })
     }
 

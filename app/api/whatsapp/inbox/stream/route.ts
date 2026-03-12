@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
   const ip = getClientIp(request)
   const rl = await whatsappInboxLimiter.check(ip)
   if (!rl.success) {
-    return new Response(JSON.stringify({ error: 'Muitas requisicoes' }), {
+    return new Response(JSON.stringify({ error: 'Muitas requisições' }), {
       status: 429,
       headers: { 'Content-Type': 'application/json' },
     })

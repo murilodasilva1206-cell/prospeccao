@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
     try {
       await deleteWebSession(client, rawToken)
     } catch (err) {
-      log.error({ err }, 'Erro ao deletar sessao no logout')
+      log.error({ err }, 'Erro ao deletar sessão no logout')
       // Still clear the cookie even if DB deletion fails
     } finally {
       client.release()

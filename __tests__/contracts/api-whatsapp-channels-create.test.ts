@@ -268,7 +268,7 @@ describe('POST /api/whatsapp/channels — route handler', () => {
     const res = await POST(req)
     expect(res.status).toBe(400)
     const body = await res.json() as { error: string; details?: unknown[] }
-    expect(body.error).toMatch(/invalido/i)
+    expect(body.error).toMatch(/inválido/i)
     expect(body.details).toBeDefined()
   })
 

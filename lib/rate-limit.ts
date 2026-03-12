@@ -183,6 +183,14 @@ export const exportLimiter = createRateLimiter({
   maxRequests: 5, // 5 exports / minute / IP
 })
 
+/** /api/lead-pools/import — tight: CSV parsing is CPU-intensive, parsing up to 500 rows per call */
+export const csvImportLimiter = createRateLimiter({
+  name: 'csv-import',
+  uniqueTokenPerInterval: 200,
+  interval: 60_000,
+  maxRequests: 3, // 3 imports / minute / IP
+})
+
 // ---------------------------------------------------------------------------
 // WhatsApp channel management limiters
 // ---------------------------------------------------------------------------

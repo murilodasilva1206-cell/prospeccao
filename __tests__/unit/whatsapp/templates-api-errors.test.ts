@@ -2,11 +2,11 @@
 // Unit: HTTP error codes -- WhatsApp template endpoints (cenario 4)
 //
 // Cobre todos os codigos de erro que a UI deve tratar:
-//   400 -- parametros de query invalidos
-//   401 -- sem autenticacao (delegado ao templates-security.test.ts; aqui: via mock)
+//   400 -- parâmetros de query inválidos
+//   401 -- sem autenticação (delegado ao templates-security.test.ts; aqui: via mock)
 //   403 -- workspace mismatch
 //   404 -- canal ou template nao encontrado
-//   409 -- canal nao e META_CLOUD
+//   409 -- canal não é META_CLOUD
 //   422 -- canal sem waba_id (sync apenas)
 //   429 -- rate limit excedido
 //   500 -- erro interno inesperado
@@ -434,10 +434,10 @@ describe('500 Erro interno do servidor', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 400 -- Query params invalidos (list apenas)
+// 400 -- Query params inválidos (list apenas)
 // ---------------------------------------------------------------------------
 
-describe('400 Query params invalidos -- GET /templates', () => {
+describe('400 Query params inválidos -- GET /templates', () => {
   function makeGetWithQuery(params: Record<string, string>): NextRequest {
     const url = new URL(`http://localhost/api/whatsapp/channels/${CHANNEL_ID}/templates`)
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
@@ -447,7 +447,7 @@ describe('400 Query params invalidos -- GET /templates', () => {
     })
   }
 
-  it('retorna 400 para status invalido (nao esta no enum)', async () => {
+  it('retorna 400 para status inválido (não está no enum)', async () => {
     const res = await listRoute(
       makeGetWithQuery({ status: 'ATIVO' }),
       { params: Promise.resolve({ id: CHANNEL_ID }) },
@@ -471,7 +471,7 @@ describe('400 Query params invalidos -- GET /templates', () => {
     expect(res.status).toBe(400)
   })
 
-  it('retorna 400 para channel_id invalido (nao UUID)', async () => {
+  it('retorna 400 para channel_id inválido (nao UUID)', async () => {
     const res = await listRoute(
       new NextRequest('http://localhost/api/whatsapp/channels/nao-uuid/templates', {
         method: 'GET',
@@ -480,11 +480,11 @@ describe('400 Query params invalidos -- GET /templates', () => {
       { params: Promise.resolve({ id: 'nao-uuid' }) },
     )
     expect(res.status).toBe(400)
-    // Nao deve chamar o DB para IDs invalidos
+    // Nao deve chamar o DB para IDs inválidos
     expect(mockConnect).not.toHaveBeenCalled()
   })
 
-  it('retorna 400 para templateId invalido (nao UUID) em /variables', async () => {
+  it('retorna 400 para templateId inválido (nao UUID) em /variables', async () => {
     const res = await varsRoute(
       makeGet(`/api/whatsapp/channels/${CHANNEL_ID}/templates/nao-uuid/variables`),
       { params: Promise.resolve({ id: CHANNEL_ID, templateId: 'nao-uuid' }) },

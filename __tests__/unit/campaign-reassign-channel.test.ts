@@ -187,7 +187,7 @@ describe('POST /api/campaigns/:id/reassign-channel', () => {
       const res = await reassignChannelRoute(req, makeParams('not-a-uuid'))
       expect(res.status).toBe(400)
       const body = await res.json() as { error: string }
-      expect(body.error).toMatch(/id invalido/)
+      expect(body.error).toMatch(/id inválido/)
     })
 
     it('returns 400 when body channel_id is not a UUID', async () => {
@@ -199,7 +199,7 @@ describe('POST /api/campaigns/:id/reassign-channel', () => {
       const res = await reassignChannelRoute(req, makeParams(CAMPAIGN_ID))
       expect(res.status).toBe(400)
       const body = await res.json() as { error: string }
-      expect(body.error).toMatch(/Parametros invalidos/)
+      expect(body.error).toMatch(/Parâmetros inválidos/)
     })
   })
 
@@ -275,7 +275,7 @@ describe('POST /api/campaigns/:id/reassign-channel', () => {
       const res = await reassignChannelRoute(req, makeParams(CAMPAIGN_ID))
       expect(res.status).toBe(409)
       const body = await res.json() as { error: string }
-      expect(body.error).toMatch(/nao esta conectado/)
+      expect(body.error).toMatch(/não está conectado/)
     })
   })
 

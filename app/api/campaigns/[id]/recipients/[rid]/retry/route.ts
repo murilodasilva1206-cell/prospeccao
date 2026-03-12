@@ -37,7 +37,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   const rateLimit = await campaignLimiter.check(ip)
   if (!rateLimit.success) {
     return NextResponse.json(
-      { error: 'Muitas requisicoes' },
+      { error: 'Muitas requisições' },
       { status: 429, headers: { 'Retry-After': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)) } },
     )
   }
@@ -45,10 +45,10 @@ export async function POST(request: NextRequest, { params }: Params) {
   const { id, rid } = await params
 
   const idParsed = UUIDSchema.safeParse(id)
-  if (!idParsed.success) return NextResponse.json({ error: 'id invalido' }, { status: 400 })
+  if (!idParsed.success) return NextResponse.json({ error: 'id inválido' }, { status: 400 })
 
   const ridParsed = UUIDSchema.safeParse(rid)
-  if (!ridParsed.success) return NextResponse.json({ error: 'rid invalido' }, { status: 400 })
+  if (!ridParsed.success) return NextResponse.json({ error: 'rid inválido' }, { status: 400 })
 
   const campaignId = idParsed.data
   const recipientId = ridParsed.data

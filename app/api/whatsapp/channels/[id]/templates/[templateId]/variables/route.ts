@@ -16,7 +16,7 @@ import { findChannelById } from '@/lib/whatsapp/channel-repo'
 import { getTemplateVariables } from '@/lib/whatsapp/template-repo'
 import { ChannelIdSchema } from '@/lib/whatsapp/route-params'
 
-const TemplateIdSchema = z.string().uuid('templateId invalido')
+const TemplateIdSchema = z.string().uuid('templateId inválido')
 
 type Params = { params: Promise<{ id: string; templateId: string }> }
 
@@ -28,18 +28,18 @@ export async function GET(request: NextRequest, { params }: Params) {
   const rateLimit = await whatsappChannelLimiter.check(ip)
   if (!rateLimit.success) {
     return NextResponse.json(
-      { error: 'Muitas requisicoes' },
+      { error: 'Muitas requisições' },
       { status: 429, headers: { 'Retry-After': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)) } },
     )
   }
 
   const resolvedParams = await params
   const idParsed = ChannelIdSchema.safeParse(resolvedParams.id)
-  if (!idParsed.success) return NextResponse.json({ error: 'id invalido' }, { status: 400 })
+  if (!idParsed.success) return NextResponse.json({ error: 'id inválido' }, { status: 400 })
   const channelId = idParsed.data
 
   const tplIdParsed = TemplateIdSchema.safeParse(resolvedParams.templateId)
-  if (!tplIdParsed.success) return NextResponse.json({ error: 'templateId invalido' }, { status: 400 })
+  if (!tplIdParsed.success) return NextResponse.json({ error: 'templateId inválido' }, { status: 400 })
   const templateId = tplIdParsed.data
 
   try {

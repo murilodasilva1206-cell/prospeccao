@@ -6,17 +6,28 @@
 // Data is loaded from the server on mount (and on manual refresh) so the
 // state survives a hard refresh (F5). The floating AgentChat remains the
 // entry-point for creating new pools; this page handles the operational
-// side: browse, paginate, inspect leads, delete, and launch campaigns.
+// side: browse, paginate, inspect leads, delete, launch campaigns,
+// import CSV, and export CSV.
 //
 // Partial selection: opening the detail modal pre-selects all leads.
 // The user can then deselect individual leads or use "Selecionar todos" /
 // "Limpar seleção" before clicking "Criar Campanha".
 // ---------------------------------------------------------------------------
 
-import { useState, useEffect, useCallback } from 'react'
-import { List, Trash2, Users, ChevronLeft, ChevronRight, X, Loader2, Building2, RefreshCw } from 'lucide-react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import {
+  List, Trash2, Users, ChevronLeft, ChevronRight, X, Loader2,
+  Building2, RefreshCw, Upload, Download, Lock, AlertCircle,
+} from 'lucide-react'
+import { toast, Toaster } from 'sonner'
 import CampaignWizard from '@/app/components/CampaignWizard'
 import type { PublicEmpresa } from '@/lib/mask-output'
+import {
+  exportPoolCsv,
+  importPoolCsv,
+  downloadSampleCsv,
+  type ImportOutcome,
+} from '@/app/whatsapp/listas/csv-actions'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -106,9 +117,20 @@ export default function ListasPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
   // Campaign launch
-  const [pendingCampaign, setPendingCampaign]     = useState<PendingCampaign | null>(null)
-  const [campaignLoading, setCampaignLoading]     = useState(false)
-  const [campaignError, setCampaignError]         = useState<string | null>(null)
+  const [pendingCampaign, setPendingCampaign] = useState<PendingCampaign | null>(null)
+  const [campaignLoading, setCampaignLoading] = useState(false)
+  const [campaignError, setCampaignError]     = useState<string | null>(null)
+
+  // Export: track which pool is being exported
+  const [exportingId, setExportingId] = useState<string | null>(null)
+
+  // Import modal
+  const [importOpen, setImportOpen]       = useState(false)
+  const [importFile, setImportFile]       = useState<File | null>(null)
+  const [importName, setImportName]       = useState('')
+  const [importing, setImporting]         = useState(false)
+  const [importResult, setImportResult]   = useState<ImportOutcome | null>(null)
+  const fileInputRef                      = useRef<HTMLInputElement>(null)
 
   // ---------------------------------------------------------------------------
   // Data fetching
@@ -186,6 +208,55 @@ export default function ListasPage() {
   }, [detail, fetchPools, offset, closeDetail])
 
   // ---------------------------------------------------------------------------
+  // Export CSV
+  // ---------------------------------------------------------------------------
+
+  const handleExport = useCallback(async (poolId: string, poolName: string) => {
+    setExportingId(poolId)
+    const outcome = await exportPoolCsv(poolId, poolName)
+    setExportingId(null)
+    if (outcome.ok) {
+      toast.success('CSV exportado com sucesso.')
+    } else if (outcome.code === 'forbidden') {
+      toast.error(outcome.message, { duration: 6000 })
+    } else {
+      toast.error(outcome.message)
+    }
+  }, [])
+
+  // ---------------------------------------------------------------------------
+  // Import CSV modal
+  // ---------------------------------------------------------------------------
+
+  const openImport = useCallback(() => {
+    setImportOpen(true)
+    setImportFile(null)
+    setImportName('')
+    setImportResult(null)
+  }, [])
+
+  const closeImport = useCallback(() => {
+    setImportOpen(false)
+    setImportFile(null)
+    setImportName('')
+    setImportResult(null)
+  }, [])
+
+  const handleImport = useCallback(async () => {
+    if (!importFile) return
+    setImporting(true)
+    setImportResult(null)
+    const outcome = await importPoolCsv(importFile, importName)
+    setImporting(false)
+    setImportResult(outcome)
+    if (outcome.ok) {
+      toast.success(`${outcome.imported} empresa(s) importadas com sucesso.`)
+      await fetchPools(0)
+      // Keep modal open so user can see the summary; they close manually
+    }
+  }, [importFile, importName, fetchPools])
+
+  // ---------------------------------------------------------------------------
   // Campaign launch (from detail modal with partial selection)
   // ---------------------------------------------------------------------------
 
@@ -258,14 +329,15 @@ export default function ListasPage() {
   // Render
   // ---------------------------------------------------------------------------
 
-  const leads        = detail?.leads_json ?? []
+  const leads         = detail?.leads_json ?? []
   const selectedCount = leads.filter((l) => selectedLeadIds.has(l.cnpj)).length
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
+      <Toaster richColors position="top-right" />
 
       {/* Page header */}
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex items-center justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-xl font-semibold text-slate-800">
             <List className="size-5 text-emerald-600" />
@@ -275,15 +347,27 @@ export default function ListasPage() {
             Buscas com resultados são salvas automaticamente pelo agente de prospecção.
           </p>
         </div>
-        <button
-          onClick={() => void fetchPools(offset)}
-          disabled={loading}
-          title="Atualizar"
-          className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-40"
-        >
-          <RefreshCw className={`size-4 ${loading ? 'animate-spin' : ''}`} />
-          Atualizar
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Import CSV button */}
+          <button
+            data-testid="btn-import-csv"
+            onClick={openImport}
+            className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-100"
+          >
+            <Upload className="size-4" />
+            Importar CSV
+          </button>
+
+          <button
+            onClick={() => void fetchPools(offset)}
+            disabled={loading}
+            title="Atualizar"
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+          >
+            <RefreshCw className={`size-4 ${loading ? 'animate-spin' : ''}`} />
+            Atualizar
+          </button>
+        </div>
       </div>
 
       {/* Error banners */}
@@ -334,6 +418,22 @@ export default function ListasPage() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-2">
+                      {/* Export CSV button */}
+                      <button
+                        data-testid={`btn-export-${pool.id}`}
+                        onClick={() => void handleExport(pool.id, pool.name)}
+                        disabled={exportingId !== null || deletingId !== null}
+                        title="Exportar lista como CSV"
+                        className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-600 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-40"
+                      >
+                        {exportingId === pool.id ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Download className="size-3.5" />
+                        )}
+                        CSV
+                      </button>
+
                       <button
                         onClick={() => void openDetail(pool.id)}
                         disabled={deletingId !== null}
@@ -505,6 +605,155 @@ export default function ListasPage() {
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Import CSV modal */}
+      {importOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={(e) => { if (e.target === e.currentTarget && !importing) closeImport() }}
+        >
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+              <h2 className="flex items-center gap-2 font-semibold text-slate-800">
+                <Upload className="size-4 text-emerald-600" />
+                Importar CSV
+              </h2>
+              <button
+                onClick={closeImport}
+                disabled={importing}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 disabled:opacity-40"
+              >
+                <X className="size-5" />
+              </button>
+            </div>
+
+            <div className="px-5 py-4 space-y-4">
+              {/* Import result summary */}
+              {importResult && (
+                <div
+                  className={`rounded-lg p-3 text-sm ${
+                    importResult.ok
+                      ? 'bg-emerald-50 text-emerald-700'
+                      : 'bg-red-50 text-red-700'
+                  }`}
+                >
+                  {importResult.ok ? (
+                    <>
+                      <p className="font-medium">Importação concluída</p>
+                      <p className="mt-0.5">
+                        {importResult.imported} empresa{importResult.imported !== 1 ? 's' : ''} importada{importResult.imported !== 1 ? 's' : ''}.
+                        {importResult.errors > 0 && (
+                          <span className="ml-1 text-amber-600">
+                            {importResult.errors} linha{importResult.errors !== 1 ? 's' : ''} com erro.
+                          </span>
+                        )}
+                      </p>
+                    </>
+                  ) : (
+                    <div className="flex gap-2">
+                      {importResult.code === 'forbidden' ? (
+                        <Lock className="mt-0.5 size-4 shrink-0" />
+                      ) : (
+                        <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                      )}
+                      <p>{importResult.message}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* File input */}
+              {(!importResult || !importResult.ok) && (
+                <>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                      Arquivo CSV <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".csv,text/csv,application/vnd.ms-excel"
+                      disabled={importing}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] ?? null
+                        setImportFile(f)
+                        setImportResult(null)
+                      }}
+                      className="block w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-emerald-50 file:px-3 file:py-1 file:text-xs file:font-medium file:text-emerald-700 hover:file:bg-emerald-100 disabled:opacity-40"
+                    />
+                    <p className="mt-1 text-xs text-slate-400">
+                      Apenas arquivos .csv · máximo 500 linhas · deduplicado por CNPJ
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                      Nome da lista <span className="text-slate-400">(opcional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="ex.: Dentistas SP — Maio 2026"
+                      value={importName}
+                      disabled={importing}
+                      maxLength={120}
+                      onChange={(e) => setImportName(e.target.value)}
+                      className="block w-full rounded-lg border border-slate-200 px-3 py-2 text-sm placeholder:text-slate-400 focus:border-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-400 disabled:opacity-40"
+                    />
+                  </div>
+
+                  {/* Sample CSV download */}
+                  <p className="text-xs text-slate-500">
+                    Cabeçalhos aceitos: cnpj, razao_social, telefone, email, municipio, uf, etc.{' '}
+                    <button
+                      type="button"
+                      onClick={downloadSampleCsv}
+                      className="text-emerald-600 underline hover:text-emerald-800"
+                    >
+                      Baixar exemplo de CSV
+                    </button>
+                  </p>
+                </>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-4">
+              {importResult?.ok ? (
+                <button
+                  onClick={closeImport}
+                  className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+                >
+                  Fechar
+                </button>
+              ) : (
+                <>
+                  <button
+                    onClick={closeImport}
+                    disabled={importing}
+                    className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    data-testid="btn-confirm-import"
+                    onClick={() => void handleImport()}
+                    disabled={!importFile || importing}
+                    className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
+                  >
+                    {importing ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Upload className="size-4" />
+                    )}
+                    {importing ? 'Importando...' : 'Importar'}
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}

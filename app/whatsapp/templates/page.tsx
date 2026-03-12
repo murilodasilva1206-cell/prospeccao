@@ -131,7 +131,7 @@ export default function TemplatesPage() {
     setChannelsLoading(true)
     fetch("/api/whatsapp/channels?limit=100")
       .then((r) => {
-        if (r.status === 401) throw new Error("Sessao expirada. Faca login novamente.")
+        if (r.status === 401) throw new Error("Sessão expirada. Faca login novamente.")
         if (!r.ok) throw new Error(`Erro ao carregar canais (${r.status})`)
         return r.json()
       })
@@ -162,10 +162,10 @@ export default function TemplatesPage() {
 
     fetch(`/api/whatsapp/channels/${selectedChannelId}/templates?${params.toString()}`)
       .then((r) => {
-        if (r.status === 401) throw new Error("Sessao expirada.")
+        if (r.status === 401) throw new Error("Sessão expirada.")
         if (r.status === 403) throw new Error("Acesso negado.")
         if (r.status === 404) throw new Error("Canal nao encontrado.")
-        if (r.status === 409) throw new Error("Canal nao e META_CLOUD.")
+        if (r.status === 409) throw new Error("Canal não é META_CLOUD.")
         if (!r.ok) throw new Error(`Erro ao carregar templates (${r.status})`)
         return r.json()
       })
@@ -198,14 +198,14 @@ export default function TemplatesPage() {
         { method: "POST" },
       )
 
-      if (r.status === 401) throw new Error("Sessao expirada. Faca login novamente.")
+      if (r.status === 401) throw new Error("Sessão expirada. Faca login novamente.")
       if (r.status === 403) throw new Error("Acesso negado.")
       if (r.status === 404) throw new Error("Canal nao encontrado.")
-      if (r.status === 409) throw new Error("Sincronizacao disponivel apenas para canais META_CLOUD.")
+      if (r.status === 409) throw new Error("Sincronização disponivel apenas para canais META_CLOUD.")
       if (r.status === 422) throw new Error("Canal sem WABA ID ou credenciais incompletas. Atualize as credenciais do canal.")
       if (r.status === 429) {
         const retryAfter = r.headers.get("Retry-After") ?? "60"
-        throw new Error(`Limite de sincronizacoes atingido. Aguarde ${retryAfter}s e tente novamente.`)
+        throw new Error(`Limite de sincronização atingido. Aguarde ${retryAfter}s e tente novamente.`)
       }
       if (r.status === 503) throw new Error("Meta indisponivel no momento. Tente novamente em alguns minutos.")
       if (r.status === 500) throw new Error("Erro interno ao sincronizar. Verifique as credenciais e tente novamente.")
@@ -272,7 +272,7 @@ export default function TemplatesPage() {
       {/* Canais disponiveis + controles */}
       {!channelsLoading && channels.length > 0 && (
         <div className="space-y-4">
-          {/* Barra de selecao e acoes */}
+          {/* Barra de seleção e acoes */}
           <div className="flex flex-wrap items-center gap-3">
             {/* Seletor de canal */}
             <select

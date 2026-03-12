@@ -22,10 +22,10 @@ export async function GET(request: NextRequest) {
   try {
     const sessionUser = await getSessionUser(client, rawToken)
     if (!sessionUser) {
-      return NextResponse.json({ error: 'Sessao invalida ou expirada' }, { status: 401 })
+      return NextResponse.json({ error: 'Sessão inválida ou expirada' }, { status: 401 })
     }
 
-    log.info({ user_id: sessionUser.user_id }, 'Sessao validada')
+    log.info({ user_id: sessionUser.user_id }, 'Sessão validada')
     return NextResponse.json({
       workspace_id: sessionUser.workspace_id,
       email: sessionUser.email,

@@ -33,19 +33,19 @@ export async function POST(request: NextRequest, { params }: Params) {
   const rateLimit = await whatsappMediaLimiter.check(ip)
   if (!rateLimit.success) {
     return NextResponse.json(
-      { error: 'Muitas requisicoes' },
+      { error: 'Muitas requisições' },
       { status: 429, headers: { 'Retry-After': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)) } },
     )
   }
 
   // UUID validation before feature flag: invalid route → 400 regardless of env
   const idParsed = ChannelIdSchema.safeParse((await params).id)
-  if (!idParsed.success) return NextResponse.json({ error: 'id invalido' }, { status: 400 })
+  if (!idParsed.success) return NextResponse.json({ error: 'id inválido' }, { status: 400 })
   const channelId = idParsed.data
 
   if (!env.MEDIA_STORAGE_ENABLED) {
     return NextResponse.json(
-      { error: 'Armazenamento de midia nao esta ativado neste ambiente' },
+      { error: 'Armazenamento de midia não está ativado neste ambiente' },
       { status: 503 },
     )
   }
@@ -83,7 +83,7 @@ export async function POST(request: NextRequest, { params }: Params) {
         })
       } catch (err) {
         if (err instanceof ZodError) {
-          return NextResponse.json({ error: 'Parametros invalidos', details: err.issues }, { status: 400 })
+          return NextResponse.json({ error: 'Parâmetros inválidos', details: err.issues }, { status: 400 })
         }
         throw err
       }
@@ -106,7 +106,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       } catch (err) {
         // Log the detailed error server-side; never expose internals to the caller
         log.warn({ err, declaredMime, size: mediaBuffer.length }, 'Arquivo rejeitado na validacao')
-        return NextResponse.json({ error: 'Arquivo invalido' }, { status: 400 })
+        return NextResponse.json({ error: 'Arquivo inválido' }, { status: 400 })
       }
 
       // Upload to S3

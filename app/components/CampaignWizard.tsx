@@ -136,7 +136,7 @@ export default function CampaignWizard({
         if (!r.ok) {
           const msg =
             r.status === 401 || r.status === 403
-              ? 'Sessao expirada. Faca login novamente.'
+              ? 'Sessão expirada. Faca login novamente.'
               : `Erro ao carregar canais (${r.status})`
           throw new Error(msg)
         }
