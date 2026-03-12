@@ -2,15 +2,15 @@
   "crons": [
     {
       "path": "/api/campaigns/process",
-      "schedule": "* * * * *"
+      "schedule": "0 9 * * *"
     },
     {
       "path": "/api/campaigns/reconcile-delivery",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 10 * * *"
     },
     {
       "path": "/api/whatsapp/ai-dispatch",
-      "schedule": "* * * * *"
+      "schedule": "0 11 * * *"
     }
   ]
 }
