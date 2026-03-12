@@ -1,1 +1,16 @@
-{}
+{
+  "crons": [
+    {
+      "path": "/api/campaigns/process",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/campaigns/reconcile-delivery",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/whatsapp/ai-dispatch",
+      "schedule": "* * * * *"
+    }
+  ]
+}

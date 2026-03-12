@@ -148,9 +148,14 @@ export default function InboxPage() {
       .catch(() => { /* silencia erro de carregamento de canais */ })
   }, [])
 
-  const { conversations, loading: convLoading, patchConversation } = useConversations({ ...filters, pollInterval: 5000 })
+  const { conversations, loading: convLoading, patchConversation, markRead } = useConversations({ ...filters, pollInterval: 5000 })
 
   const selectedConversation = conversations.find((c) => c.id === selectedConversationId) ?? null
+
+  const handleSelectConversation = (id: string | null) => {
+    setSelectedConversationId(id)
+    if (id) void markRead(id)
+  }
 
   const { messages, loading: msgLoading, error: msgError, hasMore, loadMore, refetch } = useMessages({
     conversationId: selectedConversationId,
@@ -182,7 +187,7 @@ export default function InboxPage() {
           <ConversationList
             conversations={conversations}
             selectedId={selectedConversationId}
-            onSelect={setSelectedConversationId}
+            onSelect={handleSelectConversation}
             loading={convLoading}
             hasActiveFilters={hasActiveFilters}
           />

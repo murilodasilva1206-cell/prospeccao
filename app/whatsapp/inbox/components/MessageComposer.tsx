@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Loader2, Mic, Paperclip, Send, FileText, Square } from 'lucide-react'
+import { Loader2, Mic, Paperclip, Send, FileText, Square, X } from 'lucide-react'
 
 interface MessageComposerProps {
   conversationId: string | null
@@ -18,6 +18,11 @@ interface ApiTemplate {
   status: string
 }
 
+interface TemplateVariable {
+  index: number
+  component: 'BODY' | 'HEADER'
+}
+
 export function MessageComposer({
   conversationId,
   channelId,
@@ -32,6 +37,10 @@ export function MessageComposer({
   const [templateMenuOpen, setTemplateMenuOpen] = useState(false)
   const [apiTemplates, setApiTemplates] = useState<ApiTemplate[]>([])
   const [templatesLoading, setTemplatesLoading] = useState(false)
+  const [pendingTemplate, setPendingTemplate] = useState<ApiTemplate | null>(null)
+  const [templateVars, setTemplateVars] = useState<TemplateVariable[]>([])
+  const [varValues, setVarValues] = useState<string[]>([])
+  const [varsLoading, setVarsLoading] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -116,10 +125,36 @@ export function MessageComposer({
     }
   }, [text, conversationId, onMessageSent])
 
-  const handleSendTemplate = useCallback(
-    async (templateName: string, language: string) => {
-      if (!channelId || !contactPhone) return
+  const openTemplateModal = useCallback(
+    async (template: ApiTemplate) => {
+      if (!channelId) return
       setTemplateMenuOpen(false)
+      setVarsLoading(true)
+      setPendingTemplate(template)
+      setVarValues([])
+      try {
+        const res = await fetch(
+          `/api/whatsapp/channels/${channelId}/templates/${template.id}/variables`,
+        )
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const d = (await res.json()) as { variables: TemplateVariable[] }
+        const sorted = [...d.variables].sort((a, b) => a.index - b.index)
+        setTemplateVars(sorted)
+        setVarValues(sorted.map(() => ''))
+      } catch {
+        // On error, send without variables
+        setTemplateVars([])
+        setVarValues([])
+      } finally {
+        setVarsLoading(false)
+      }
+    },
+    [channelId],
+  )
+
+  const handleSendTemplate = useCallback(
+    async (bodyParams: string[]) => {
+      if (!channelId || !contactPhone || !pendingTemplate) return
       setSending(true)
       setErrorMessage(null)
       try {
@@ -128,15 +163,16 @@ export function MessageComposer({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             to: contactPhone.replace(/[^\d]/g, ''),
-            name: templateName,
-            language,
-            body_params: [],
+            name: pendingTemplate.template_name,
+            language: pendingTemplate.language,
+            body_params: bodyParams,
           }),
         })
         if (!res.ok) {
           const d = (await res.json().catch(() => ({}))) as { error?: string }
           throw new Error(d.error ?? `HTTP ${res.status}`)
         }
+        setPendingTemplate(null)
         onMessageSent()
       } catch (err) {
         setErrorMessage(err instanceof Error ? err.message : 'Erro ao enviar template')
@@ -144,7 +180,7 @@ export function MessageComposer({
         setSending(false)
       }
     },
-    [channelId, contactPhone, onMessageSent],
+    [channelId, contactPhone, pendingTemplate, onMessageSent],
   )
 
   const stopRecording = useCallback(async () => {
@@ -274,7 +310,7 @@ export function MessageComposer({
                 apiTemplates.map((tpl) => (
                   <button
                     key={tpl.id}
-                    onClick={() => void handleSendTemplate(tpl.template_name, tpl.language)}
+                    onClick={() => void openTemplateModal(tpl)}
                     className="w-full rounded px-2 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
                   >
                     <span className="font-medium">{tpl.template_name}</span>
@@ -311,6 +347,78 @@ export function MessageComposer({
           <Send className="size-5" />
         </button>
       </div>
+
+      {/* Template variables modal */}
+      {pendingTemplate && !varsLoading && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-gray-200 bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+              <div>
+                <p className="text-sm font-semibold text-gray-800">{pendingTemplate.template_name}</p>
+                <p className="text-xs text-gray-400">{pendingTemplate.language}</p>
+              </div>
+              <button
+                onClick={() => setPendingTemplate(null)}
+                className="rounded p-1 text-gray-400 hover:text-gray-600"
+                aria-label="Fechar"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <div className="px-4 py-3">
+              {templateVars.length === 0 ? (
+                <p className="text-sm text-gray-500">Este template não tem variáveis.</p>
+              ) : (
+                <div className="space-y-3">
+                  {templateVars.map((v, i) => (
+                    <div key={v.index}>
+                      <label className="mb-1 block text-xs font-medium text-gray-600">
+                        {'{{'}
+                        {v.index}
+                        {'}}'}
+                        <span className="ml-1 text-gray-400">({v.component})</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={varValues.at(i) ?? ''}
+                        onChange={(e) => {
+                          const val = e.target.value
+                          setVarValues((prev) => prev.map((v, idx) => (idx === i ? val : v)))
+                        }}
+                        placeholder={`Valor para {{${v.index}}}`}
+                        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-gray-100 px-4 py-3">
+              <button
+                onClick={() => setPendingTemplate(null)}
+                className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => void handleSendTemplate(varValues.filter((v) => v.trim()))}
+                disabled={sending || templateVars.some((_, i) => !varValues.at(i)?.trim())}
+                className="rounded-lg bg-green-500 px-4 py-2 text-sm font-medium text-white hover:bg-green-600 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {sending ? <Loader2 className="size-4 animate-spin" /> : 'Enviar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {varsLoading && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">
+          <Loader2 className="size-6 animate-spin text-green-500" />
+        </div>
+      )}
     </div>
   )
 }

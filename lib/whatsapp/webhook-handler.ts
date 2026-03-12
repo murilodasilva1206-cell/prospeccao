@@ -189,6 +189,35 @@ export async function handleInboundMessage(
   // 2. Increment unread counter
   await incrementUnread(client, conversation.id)
 
+  // 3a. If inbound has a media_id, download from provider and upload to S3.
+  //     Non-fatal: if download/upload fails, message is still saved without S3 key.
+  let mediaS3Key: string | null = null
+  let mediaMime: string | null = payload.mime_type ?? null
+  let mediaFilename: string | null = payload.filename ?? null
+  const mediaSizeBytes: number | null = payload.media_size_bytes ?? null
+
+  if (payload.media_id) {
+    try {
+      const { findChannelById: findCh } = await import('./channel-repo')
+      const { decryptCredentials: decrypt } = await import('./crypto')
+      const { getAdapter: getAdapterFn } = await import('./adapters/factory')
+      const { uploadMedia: uploadFn } = await import('./media')
+
+      const fullChannel = await findCh(client, channel.id)
+      if (fullChannel) {
+        const creds = decrypt(fullChannel.credentials_encrypted)
+        const adapter = getAdapterFn(fullChannel.provider)
+        const downloaded = await adapter.downloadMedia(fullChannel, creds, String(payload.media_id))
+        const { s3Key } = await uploadFn(downloaded.buffer, downloaded.mime, downloaded.filename, channel.id)
+        mediaS3Key = s3Key
+        mediaMime = downloaded.mime
+        mediaFilename = downloaded.filename
+      }
+    } catch {
+      // Non-fatal: media download/upload failed; message saved without S3 key
+    }
+  }
+
   // 3. Persist inbound message
   const message = await insertMessage(client, {
     conversation_id: conversation.id,
@@ -198,9 +227,10 @@ export async function handleInboundMessage(
     message_type: messageType,
     status: 'delivered',
     body,
-    media_mime_type: payload.mime_type ?? null,
-    media_filename: payload.filename ?? null,
-    media_size_bytes: payload.media_size_bytes ?? null,
+    media_s3_key: mediaS3Key,
+    media_mime_type: mediaMime,
+    media_filename: mediaFilename,
+    media_size_bytes: mediaSizeBytes,
     reaction_to_msg_id: payload.reaction_to ?? null,
     sent_by: 'webhook',
     raw_event: event.payload as Record<string, unknown>,
@@ -212,27 +242,33 @@ export async function handleInboundMessage(
     const { findChannelById } = await import('./channel-repo')
     const fullChannel = await findChannelById(client, channel.id)
     if (fullChannel) {
-      aiResult = await routeInboundToAi(
-        {
-          body,
-          from: contactPhone,
-          conversation_id: conversation.id,
-        },
-        fullChannel,
-      )
+      try {
+        aiResult = await routeInboundToAi(
+          {
+            body,
+            from: contactPhone,
+            conversation_id: conversation.id,
+          },
+          fullChannel,
+        )
 
-      // 5. If AI decided to reply, persist outbound AI message
-      if (aiResult.shouldReply && aiResult.replyText) {
-        await insertMessage(client, {
-          conversation_id: conversation.id,
-          channel_id: channel.id,
-          direction: 'outbound',
-          message_type: 'text',
-          status: 'queued',
-          body: aiResult.replyText,
-          sent_by: 'ai',
-          ai_decision_log: aiResult.decisionLog,
-        })
+        // 5. If AI decided to reply, persist outbound AI message
+        if (aiResult.shouldReply && aiResult.replyText) {
+          await insertMessage(client, {
+            conversation_id: conversation.id,
+            channel_id: channel.id,
+            direction: 'outbound',
+            message_type: 'text',
+            status: 'queued',
+            body: aiResult.replyText,
+            sent_by: 'ai',
+            ai_decision_log: aiResult.decisionLog,
+          })
+        }
+      } catch {
+        // AI routing is non-fatal — inbound message was already saved above.
+        // The conversation is preserved even if the AI fails.
+        aiResult = null
       }
     }
   }

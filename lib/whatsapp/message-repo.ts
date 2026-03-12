@@ -126,6 +126,56 @@ export async function findMessagesByConversation(
   return result.rows
 }
 
+export interface AiQueuedMessage {
+  id: string
+  conversation_id: string
+  channel_id: string
+  body: string | null
+  ai_decision_log: Record<string, unknown> | null
+}
+
+/**
+ * Atomically claims up to `limit` AI-authored queued messages for dispatch.
+ * Uses FOR UPDATE SKIP LOCKED to prevent duplicate sends across concurrent cron runs.
+ * Transitions status queued → sending while claiming.
+ */
+export async function claimAiQueuedMessages(
+  client: PoolClient,
+  limit = 10,
+): Promise<AiQueuedMessage[]> {
+  const result = await client.query<AiQueuedMessage>(
+    `WITH claimed AS (
+       SELECT id FROM messages
+       WHERE sent_by = 'ai' AND status = 'queued'
+       ORDER BY created_at ASC
+       LIMIT $1
+       FOR UPDATE SKIP LOCKED
+     )
+     UPDATE messages SET status = 'sending', updated_at = NOW()
+     FROM claimed
+     WHERE messages.id = claimed.id
+     RETURNING messages.id, messages.conversation_id, messages.channel_id,
+               messages.body, messages.ai_decision_log`,
+    [limit],
+  )
+  return result.rows
+}
+
+/**
+ * Marks a dispatched AI message as sent (provider accepted) or failed.
+ */
+export async function markAiMessageDispatched(
+  client: PoolClient,
+  messageId: string,
+  outcome: { status: 'sent' | 'failed'; provider_message_id?: string | null },
+): Promise<void> {
+  await client.query(
+    `UPDATE messages SET status = $1, provider_message_id = $2, updated_at = NOW()
+     WHERE id = $3`,
+    [outcome.status, outcome.provider_message_id ?? null, messageId],
+  )
+}
+
 /** Fetches a single message by ID. */
 export async function findMessageById(client: PoolClient, id: string): Promise<Message | null> {
   const result = await client.query<Message>(

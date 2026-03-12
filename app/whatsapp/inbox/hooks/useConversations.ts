@@ -98,5 +98,20 @@ export function useConversations({
     [fetchConversations],
   )
 
-  return { conversations, loading, error, refetch: fetchConversations, patchConversation }
+  const markRead = useCallback(
+    async (id: string) => {
+      // Optimistically zero unread_count locally for instant UI feedback
+      setConversations((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, unread_count: 0 } : c)),
+      )
+      try {
+        await fetch(`/api/whatsapp/conversations/${id}/read`, { method: 'POST' })
+      } catch {
+        // Non-fatal — badge will correct itself on next poll
+      }
+    },
+    [],
+  )
+
+  return { conversations, loading, error, refetch: fetchConversations, patchConversation, markRead }
 }
